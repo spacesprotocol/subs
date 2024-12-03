@@ -293,8 +293,7 @@ fn prove(working_dir : &Option<String>) -> Result<(Vec<Commitment>, HashMap<Stri
     Ok((output, tx_set))
 }
 
-
-fn commit(args : CommitArgs) -> Result<(), Error> {
+fn commit(args: CommitArgs) -> Result<(), Error> {
     let uncommitted_path = get_working_dir(&args.c)?.join(STAGING_FILE);
     if !std::path::Path::new(uncommitted_path.to_str().unwrap()).exists() {
         return Err(Error::from(io::Error::new(io::ErrorKind::InvalidData, "No changes to prove and commit")));
@@ -320,12 +319,21 @@ fn commit(args : CommitArgs) -> Result<(), Error> {
         let filename = format!("{}.sdb", space);
         let path = path.join(filename);
         let db = Database::open(path.to_str().unwrap())?;
-        let mut tx = db.begin_write().unwrap();
+        
+        // Collect all changes first
         let reader = TransactionReader(raw.as_slice());
-
-        for t in reader.iter() {
-            let key = t.subspace_hash.try_into().unwrap();
-            tx.insert(key, t.owner.to_vec()).unwrap();
+        let changes: Vec<_> = reader.iter()
+            .map(|t| {
+                let key = t.subspace_hash.try_into()
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid subspace hash"))?;
+                Ok((key, t.owner.to_vec()))
+            })
+            .collect::<Result<_, io::Error>>()?;
+        
+        // Chain the inserts together
+        let mut tx = db.begin_write()?;
+        for (key, value) in changes {
+            tx = tx.insert(key, value)?;
         }
         tx.commit()?;
     }
