@@ -1,105 +1,123 @@
-# Subspacer
+<br />
+<p align="center">
+  <h2 align="center">subs</h2>
+  <p align="center">
+    🟠 <i>create, prove & verify Bitcoin handles off-chain</i>
+    <br/>
+   </p>
+</p>
 
-Note: this does not fully implement the functionality described in the [Spaces protocol](https://spacesprotocol.org) yet and should be considered a proof of concept.
-
-Scalable layer-2 registry and prover for subspaces.
 
 ## How it works
 
-<img src="https://spacesprotocol.org/images/subspacer.png" />
+**Basic principle**
 
-The registry uses a zero-knowledge virtual machine ([zkVM](https://dev.risczero.com/terminology#zero-knowledge-virtual-machine-zkvm)) to prove the correct execution of transactions associated with subspaces. It produces a `receipt` which contains a verifiable proof for the execution of the Spaces [program](https://github.com/spacesprotocol/subspacer/tree/main/program) and some public outputs.
+1. Add handles to a Merkle tree & commit the 32-byte root to Bitcoin.
+
+2. New handles must prove non-existence in the previous root(s).
+
+3. Subs compresses these proofs: STARK or SNARK → root cert.
+
+4. Owners get an inclusion proof → leaf cert.
+
+5. Certificates are non-revocable: once bound to a script pubkey, it’s yours.
+
+Note: Only the tree root gets committed to Bitcoin - certificates remain off-chain (low footprint!).
+
+See https://github.com/buffrr/SIP-XXX
+
+
+### Who gets to be the operator?
+
+Operators are chosen via permissionless auctions on Bitcoin. They manage top-level spaces: https://explorer.spacesprotocol.org
+
 
 ## Installation
 
-Clone the repo and build binaries with `cargo`:
+```
+git clone https://github.com/spacesprotocol/subs && cd subs
+cargo install --path subs
+```
+
+For operators, use `--features metal` on macos or `cuda` for nvidia machines to enable GPU acceleration.
+
+## Usage
+
+### For end users
+
+Example to request a handle:
+
+```
+$ subs request alice@bitcoin
+✔ Created handle request
+   → alice@bitcoin.req.json
+   → Private key saved: alice@bitcoin.priv
+
+Submit the request file to @bitcoin operator to get a certificate.
+```
+
+After getting a certificate, verify ownership:
+
+```
+$ subs verify alice@bitcoin.cert.json --root @bitcoin.cert.json
+✔ Certificate verified
+   → handle : alice@bitcoin
+   → genesis: 85d3a410db41b317b7c0310df64cefb6504482c0b5c7e8a36c992ed0dfdb38af
+   → anchor : dd101b1e3a52e97d2a71d518c7794ffc614260f39d38a307ae7274bc976b286b
+```
+
+
+### For operators
+
+Add inclusion requests:
 
 ```bash
-cargo build --release
+$ subs add alice@bitcoin.req.json
+# or all in a directory (files named <subspace>@<space>.req.json)
+$ subs add .
 ```
 
-To build the `registry` binary with GPU acceleration, use `metal` or `cuda` features depending on your machine.
-```rust
-cargo build --release --package registry --features "metal"
-```
-
-## Quick Start
-
-The `subs` command line utility can be used to generate keys and interact with the registry to create new subspaces, transfer ownership and renew names.
-
-First, let's create a public/private key pair to use:
-
-```bash
-$ subs key gen
-Generated k-db732761.priv
-Public key: db732761ee9d82ba26aedc593d5c263bacd91f4b75a71712215ea94c5ece9ffe
-```
-
-Create a transaction to register `bob@example`:
-
-
-
-```bash
-$ subs create bob@example --private-key k-49f8d3a9.priv
-{
-  "example": {
-    "version": 0,
-    "transactions": [
-      {
-        "name": "bob",
-        "owner": "db732761ee9d82ba26aedc593d5c263bacd91f4b75a71712215ea94c5ece9ffe"
-      }
-    ]
-  }
-}
-```
-
-We'll assume that we're operating `@example` and responsible for including this transaction.
-
-```bash
-$ registry add bob.json
-```
-
-Check the status of our changes
-
-```bash
-$ registry status
-Changes to prove and commit:
-Total spaces: 1, Total Registrations: 1, Total Updates: 0
-  (use "registry commit" to prove and commit changes)
-```
-
-Prove and commit the changes:
-
-```bash
-$ registry commit
-```
-
-Initial commit does not requiring proving as the tree is empty but adding more names will run the prover and should produce something like this:
+Commit changes:
 
 ```
--------------------------------------
-- Using Prover: local
-- Took: 2.34743775s
-- Receipt Verified
+$ subs commit
+```
 
-Journal Output
--------------------------------------
-Total Spaces: 1
+### Generating a root certificate (GPUs recommended)
 
-        ID: 50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c
-        Merkle Root Changes: 
-        - Initial: a08d760a9cd74c8bb4b9a0acba82ee31473faa5d654d2f25caf716033c67d0be
-        - Final: 8fe93aad37f12e1d11126f2fd3d77fb08eff4f59222cc64e4eacbc64413bd9ad
+Proving is the operator's responsibility, and generates the root certificate for the space.
+
+To prove changes in the working directory:
+
+```
+$ subs prove
+```
+
+This will create a `@bitcoin.cert.json` with a STARK proof.
+
+
+### Compress (STARK → SNARK, requires x86 for now)
+
+```
+$ subs compress
+```
+
+This will update `@bitcoin.cert.json` to use a smaller SNARK receipt.
+
+
+### Issuing certificates
+
+```
+$ subs cert issue alice@bitcoin
 ```
 
 
-### Using Bonsai
+## Using Remote provers
 
 If you have a bonsai API key, you can run the prover remotely.
 
 ```bash
-BONSAI_API_KEY="YOUR_API_KEY" BONSAI_API_URL="BONSAI_URL" registry commit
+BONSAI_API_KEY="YOUR_API_KEY" BONSAI_API_URL="BONSAI_URL" subs compress
 ```
 
 
