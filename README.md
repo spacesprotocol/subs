@@ -34,6 +34,15 @@ Operators are chosen via permissionless auctions on Bitcoin. They manage top-lev
 
 ## Installation
 
+**Prereq (RISC Zero [toolchain](https://dev.risczero.com/api/zkvm/install)):**
+
+```
+curl -L https://risczero.com/install | bash
+rzup install
+```
+
+Install subs:
+
 ```
 git clone https://github.com/spacesprotocol/subs && cd subs
 cargo install --path subs
