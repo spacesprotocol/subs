@@ -3,15 +3,36 @@ name = "subs"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "subs"
+path = "src/bin/main.rs"
+
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
-clap = { version = "4.4.18", features = ["derive", "cargo"] }
+methods = { path = "../methods" }
+risc0-zkvm = { version = "^3.0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = "1.0"
+bitcoin = { version = "0.32.2", features = ["base64", "serde", "rand-std"] }
+spacedb = { git = "https://github.com/spacesprotocol/spacedb.git", branch = "main" }
+spaces_protocol = { git = "https://github.com/spacesprotocol/spaces", features = ["std"] }
 program = { path = "../program" }
-k256 = { version = "=0.13.1", features = ["arithmetic", "serde", "expose-field", "ecdsa"], default_features = false }
-rand_core = "0.6.4"
+clap = { version = "4.5.32", features = ["derive", "cargo"] }
+serde_json = "1.0.140"
+atty = "0.2.14"
+serde_with = "3.12.0"
+sha2 = "0.10.6"
+anyhow = "1.0.97"
 hex = "0.4.3"
-serde_json = "1.0.111"
-atty = "0.2"
+bincode = { version = "2.0.1", features = ["serde"] }
+regex = "1.11.2"
+rand_core = "0.9.3"
+base64 = "0.22.1"
 
-
+[features]
+cuda = ["risc0-zkvm/cuda"]
+metal = ["risc0-zkvm/metal"]
+default = []
+prove = ["risc0-zkvm/prove"]
