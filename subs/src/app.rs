@@ -139,7 +139,7 @@ pub struct VerifyArgs {
 
     /// The root certificate file (--root <FILE>)
     #[arg(long)]
-    root: PathBuf,
+    root: Option<PathBuf>,
 
 }
 
@@ -823,10 +823,29 @@ impl App {
             }
         };
 
-        let root_cert_bytes = fs::read(&args.root)
-            .with_context(|| format!("reading {}", args.root.display()))?;
+        if args.root.is_none() {
+            println!("✔ Ready to verify inclusion");
+            println!("   → handle:   {}", sub_cert.request.handle);
+            println!("   → genesis:  {}", hex::encode(sub_root));
+            println!("   → root:     {}", hex::encode(sub_root));
+            println!("   → history:  {}", hex::encode(sub_root));
+
+            println!();
+            println!("   To verify inclusion, run:");
+            println!(
+                "       $ space-cli getcommitment {} {}",
+                sub_cert.request.handle.space(),
+                hex::encode(sub_root)
+            );
+            println!("   ⚠️ Make sure the root, and history hashes match!");
+            return Ok(());
+        }
+        let root_path = args.root.expect("root");
+
+        let root_cert_bytes = fs::read(&root_path)
+            .with_context(|| format!("reading {}", root_path.display()))?;
         let root_cert: JsonCert = serde_json::from_slice(&root_cert_bytes)
-            .map_err(|e| anyhow!("parse {}: {}", args.root.display(), e))?;
+            .map_err(|e| anyhow!("parse {}: {}", root_path.display(), e))?;
 
         if sub_cert.request.handle.space() != root_cert.request.handle.space() {
             return Err(anyhow!("invalid root {}, handle's parent is {}",
@@ -854,7 +873,7 @@ impl App {
             }
             JsonWitness::SubTree(_) => {
                 return Err(anyhow!("{} is not a root certificate (expected receipt witness)",
-                               args.root.display()));
+                               root_path.display()));
             }
         };
 
@@ -867,6 +886,7 @@ impl App {
         // Compare roots: subtree.compute_root() must match commitment.final_root
         let final_root = commitment.final_root.clone();
         let genesis_root = commitment.initial_root.clone();
+        let history_hash = commitment.transcript.clone();
         if sub_root != final_root {
             return Err(anyhow!(
             "root mismatch: subtree={} receipt_final={}",
@@ -883,11 +903,20 @@ impl App {
         }
 
 
-        println!("✔ Certificate verified");
+        println!("✔ Ready to verify for inclusion");
         println!("   → handle : {}", sub_cert.request.handle);
         println!("   → genesis: {}", hex::encode(genesis_root));
-        println!("   → anchor : {}", hex::encode(final_root));
+        println!("   → root : {}", hex::encode(final_root));
+        println!("   → history : {}", hex::encode(history_hash));
 
+        println!();
+        println!("   To verify inclusion, run:");
+        println!(
+            "       $ space-cli getcommitment {} {}",
+            sub_cert.request.handle.space(),
+            hex::encode(final_root)
+        );
+        println!("   ⚠️ Make sure the root, and history hashes match!");
         Ok(())
     }
 }
