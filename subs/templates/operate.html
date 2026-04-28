@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Operate - subsd{% endblock %}
+{% block nav_operate_cls %}active{% endblock %}
+
+{% block topbar_left %}
+<a href="/" class="topbar-back">← back</a>
+<div class="topbar-divider"></div>
+<span class="topbar-title">Delegate a Space</span>
+{% endblock %}
+
+{% block content %}
+<div class="anim" style="display:flex;flex-direction:column;gap:16px">
+
+    <div class="card anim" style="animation-delay:.04s">
+        <div class="section-header">
+            <div class="flex items-center gap-3">
+                <span class="step-number">1</span>
+                <h3 style="text-transform:none;letter-spacing:0">Initialize the space for delegation</h3>
+            </div>
+        </div>
+        <div class="section-body" style="display:flex;flex-direction:column;gap:14px">
+            <p style="font-size:13px;color:var(--text-muted);margin:0">The space owner runs this once to enable delegation:</p>
+            <div class="code-inline">
+                <code style="font-size:12px;color:var(--text-secondary)">space-cli operate @example</code>
+                <button class="hash-copy" onclick="copyToClipboard('space-cli operate @example',this)">copy</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card anim" style="animation-delay:.08s">
+        <div class="section-header">
+            <div class="flex items-center gap-3">
+                <span class="step-number">2</span>
+                <h3 style="text-transform:none;letter-spacing:0">Delegate to this operator</h3>
+            </div>
+        </div>
+        <div class="section-body" style="display:flex;flex-direction:column;gap:14px">
+            <div>
+                <div class="form-label">Operator Address</div>
+                <div class="hash-row">
+                    <span class="hash-value select-all">{{ space_address }}</span>
+                    <button class="hash-copy" onclick="copyToClipboard('{{ space_address }}',this)">copy</button>
+                </div>
+            </div>
+            <div class="code-inline">
+                <code style="font-size:12px;color:var(--text-secondary)">space-cli delegate @example --to {{ space_address }}</code>
+                <button class="hash-copy" onclick="copyToClipboard('space-cli delegate @example --to {{ space_address }}',this)">copy</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card anim" style="animation-delay:.12s">
+        <div class="section-header">
+            <div class="flex items-center gap-3">
+                <span class="step-number">3</span>
+                <h3 style="text-transform:none;letter-spacing:0">Start operating</h3>
+            </div>
+        </div>
+        <div class="section-body">
+            <p style="font-size:13px;color:var(--text-muted)">Once the delegation is confirmed on-chain, the space will automatically appear on the <a href="/" style="color:var(--accent);font-weight:500">dashboard</a> where you can start operating it.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}{% endblock %}

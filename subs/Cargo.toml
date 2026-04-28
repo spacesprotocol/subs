@@ -1,39 +1,44 @@
 [package]
 name = "subs"
-version = "0.1.2"
+version = "0.1.0"
 edition = "2021"
+description = "HTTP REST API server for subs operations"
+default-run = "subs"
 
 [[bin]]
 name = "subs"
-path = "src/bin/main.rs"
-
-[lib]
-path = "src/lib.rs"
+path = "src/main.rs"
 
 [dependencies]
-risc0-zkvm = { version = "^3.0.1", features = ["std"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-serde = "1.0"
-bitcoin = { version = "0.32.2", features = ["base64", "serde", "rand-std"] }
-spacedb = { git = "https://github.com/buffrr/spacedb.git", branch = "borsh" }
-spaces_protocol = { git = "https://github.com/spacesprotocol/spaces", features = ["std"], branch = "subspaces" }
-spaces_ptr = { git = "https://github.com/spacesprotocol/spaces", features = ["std"], branch = "subspaces" }
-spaces_client = { git = "https://github.com/spacesprotocol/spaces", branch = "subspaces" }
-libveritas = { git = "https://github.com/spacesprotocol/libveritas" }
-libveritas_zk = { git = "https://github.com/spacesprotocol/libveritas" }
-libveritas_methods = { git = "https://github.com/spacesprotocol/libveritas" }
-clap = { version = "4.5.32", features = ["derive", "cargo"] }
-serde_json = "1.0.140"
-atty = "0.2.14"
-anyhow = "1.0.97"
-hex = "0.4.3"
-borsh = { version = "1.5", default-features = false, features = ["derive"] }
-regex = "1.11.2"
-base64 = "0.22.1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+subs-core = { workspace = true }
+subs-types = { workspace = true }
+
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+tower-http = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+base64 = "0.22"
+reqwest = { workspace = true, features = ["rustls-tls"] }
+hex = { workspace = true }
+askama = "0.12"
+askama_axum = "0.4"
+spaces_client = { workspace = true }
+spaces_protocol = { workspace = true }
+spaces_wallet = { workspace = true, optional = true }
+spaces_testutil = { workspace = true, optional = true }
+bitcoin = { workspace = true }
+borsh = { workspace = true }
+rusqlite = { workspace = true }
+
+
+relay = { workspace = true, optional = true }
 
 [features]
-cuda = ["risc0-zkvm/cuda"]
-metal = ["risc0-zkvm/metal"]
 default = []
-prove = ["risc0-zkvm/prove"]
+test-rig = ["dep:spaces_testutil", "dep:spaces_wallet", "dep:relay"]

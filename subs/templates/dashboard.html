@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - subsd{% endblock %}
+{% block nav_dashboard_cls %}active{% endblock %}
+
+{% block topbar_left %}
+<span class="topbar-title">Dashboard</span>
+<button onclick="location.reload()" class="btn-sm" style="margin-left:12px">↻ Refresh</button>
+{% endblock %}
+
+{% block content %}
+<div class="anim" style="display:flex;flex-direction:column;gap:16px">
+
+    {% if spaces.is_empty() && delegations.is_empty() %}
+    <div class="card">
+        <div class="empty-state">
+            <div class="empty-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text-muted)">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
+                </svg>
+            </div>
+            <h3 style="font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:4px">No spaces yet</h3>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:20px">Delegate a space to this operator to get started.</p>
+            <a href="/ui/operate" class="btn-primary">Get Delegation Address</a>
+        </div>
+    </div>
+    {% else %}
+
+    {% if !delegations.is_empty() %}
+    <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="flex items-center gap-2">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--yellow)" class="animate-pulse"></span>
+            <span style="font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted)">Delegated to you</span>
+        </div>
+        <div class="card-grid cols-3">
+            {% for name in delegations %}
+            <div class="card" style="border-style:dashed;border-color:rgba(212,169,78,0.3)">
+                <div style="padding:18px">
+                    <div class="flex items-center justify-between" style="margin-bottom:14px">
+                        <div class="flex items-center gap-3">
+                            <div class="card-icon" style="background:var(--yellow-dim)">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="color:var(--yellow)">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
+                                </svg>
+                            </div>
+                            <span style="font-family:var(--mono);font-size:15px;font-weight:700;color:var(--text-primary)">{{ name }}</span>
+                        </div>
+                        <span class="status-badge status-parked">NEW</span>
+                    </div>
+                    <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">This space has been delegated to your wallet but is not yet operated.</p>
+                    <button onclick="operateSpace('{{ name }}')" data-btn="{{ name }}" class="btn-primary w-full" style="justify-content:center">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg>
+                        Start Operating
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if !spaces.is_empty() %}
+    <div style="display:flex;flex-direction:column;gap:10px">
+        {% if !delegations.is_empty() %}
+        <span style="font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted)">Active Spaces</span>
+        {% endif %}
+        <div class="card-grid cols-3">
+            {% for space in spaces %}
+            <a href="/ui/spaces/{{ space.space|urlencode }}" class="card space-card">
+                <div class="flex items-center justify-between" style="margin-bottom:14px">
+                    <div class="flex items-center gap-3">
+                        <div class="card-icon" style="background:var(--accent-dim)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="color:var(--accent)">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
+                            </svg>
+                        </div>
+                        <span style="font-family:var(--mono);font-size:15px;font-weight:700;color:var(--text-primary)">{{ space.space }}</span>
+                    </div>
+                    {% if space.has_groth16 %}
+                    <span class="status-badge status-committed">SNARK</span>
+                    {% else if space.has_receipt %}
+                    <span class="status-badge status-published">STARK</span>
+                    {% endif %}
+                </div>
+                <div class="card-stats">
+                    <div>
+                        <div class="card-stat-label">Handles</div>
+                        <div class="card-stat-value" style="color:var(--text-primary)">{{ space.total_handles }}</div>
+                    </div>
+                    <div class="card-sep"></div>
+                    <div>
+                        <div class="card-stat-label">Committed</div>
+                        <div class="card-stat-value" style="color:var(--green)">{{ space.committed_handles }}</div>
+                    </div>
+                    <div class="card-sep"></div>
+                    <div>
+                        <div class="card-stat-label">Staged</div>
+                        <div class="card-stat-value" style="color:{% if space.staged_handles > 0 %}var(--accent){% else %}var(--text-muted){% endif %}">{{ space.staged_handles }}</div>
+                    </div>
+                    {% if space.pending_proofs > 0 %}
+                    <div class="card-sep"></div>
+                    <div>
+                        <div class="card-stat-label">Proofs</div>
+                        <div class="card-stat-value" style="color:var(--purple)">{{ space.pending_proofs }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function operateSpace(name) {
+    const btn = document.querySelector(`[data-btn="${name}"]`);
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="animate-spin">'
+        + '<circle opacity="0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>'
+        + '<path opacity="0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>'
+        + '</svg>Setting up...';
+    try {
+        const r = await fetch(`/spaces/${encodeURIComponent(name)}/operate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const j = await r.json();
+        if (r.ok) {
+            window.location.href = `/ui/spaces/${encodeURIComponent(name)}`;
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            alert(j.error || 'Failed to operate space');
+        }
+    } catch (e) {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+        alert(e.message);
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Query - subsd{% endblock %}
+{% block nav_query_cls %}active{% endblock %}
+
+{% block topbar_left %}
+<span class="topbar-title">Query</span>
+{% endblock %}
+
+{% block content %}
+<div class="anim" style="display:flex;flex-direction:column;gap:16px">
+
+    <div class="card anim" style="animation-delay:.04s">
+        <div class="section-body">
+            <form id="queryForm" class="flex items-end gap-3">
+                <div class="flex-1">
+                    <input type="text" id="queryHandle" placeholder="alice@space, bob@space" class="input-field w-full" required autofocus>
+                </div>
+                <button type="submit" id="queryBtn" class="btn-primary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    Resolve
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div id="errorBox" class="alert alert-error hidden anim"></div>
+
+    <div id="resultBox" class="hidden" style="flex-direction:column;gap:16px"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById('queryForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const handle = document.getElementById('queryHandle').value.trim();
+    if (!handle) return;
+
+    const btn = document.getElementById('queryBtn');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="animate-spin"><circle opacity="0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path opacity="0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Resolving...';
+
+    document.getElementById('errorBox').classList.add('hidden');
+    const rb = document.getElementById('resultBox');
+    rb.style.display = 'none';
+
+    try {
+        const r = await fetch('/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ handle })
+        });
+        const j = await r.json();
+
+        if (!r.ok) {
+            showError(j.error || JSON.stringify(j));
+            return;
+        }
+
+        renderZones(j);
+    } catch (e) {
+        showError(e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+});
+
+function showError(msg) {
+    const el = document.getElementById('errorBox');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+}
+
+function renderZones(zones) {
+    const box = document.getElementById('resultBox');
+    box.classList.remove('hidden');
+    box.style.display = 'flex';
+    if (!zones.length) { box.innerHTML = '<div class="card"><div class="section-body" style="color:var(--text-muted);font-size:13px">No zones found</div></div>'; return; }
+    let html = '';
+    for (const z of zones) { html += renderZone(z); }
+    const qHandle = encodeURIComponent(document.getElementById('queryHandle').value.trim());
+    html += `<div class="card"><div class="section-header"><h3>Export</h3><div class="flex items-center gap-2"><a href="/query/message?handle=${qHandle}" class="btn-sm" download="query.spacemsg">Download .spacemsg</a><a href="/query/anchors" class="btn-sm" download="anchors.json">Download anchors.json</a></div></div><div class="section-body" style="font-size:12px;color:var(--text-muted)">Download the binary message and root anchors for offline verification.</div></div>`;
+    html += `<div class="card"><div class="section-header"><h3>Raw Response</h3><button onclick="document.getElementById('rawBox').classList.toggle('hidden')" class="btn-sm">Toggle</button></div><div id="rawBox" class="section-body hidden"><pre class="code-block">${esc(JSON.stringify(zones, null, 2))}</pre></div></div>`;
+    box.innerHTML = html;
+}
+
+function renderZone(z) {
+    let h = '';
+    const sovBadge = sovClass(z.sovereignty);
+    const vBadge = badgeInfo(z.badge);
+    h += `<div class="card"><div class="section-body"><div class="flex items-center gap-4"><div class="card-icon" style="background:var(--accent-dim);width:44px;height:44px;border-radius:12px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent)"><path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg></div><div><span style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--text-primary)">${esc(z.handle)}</span>${vBadge.icon}<div class="flex items-center gap-2" style="margin-top:4px"><span class="status-badge ${sovBadge.cls}">${sovBadge.label}</span>${vBadge.tag}<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">Anchor: #${z.anchor}</span></div></div></div>`;
+    h += `<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle)"><div class="detail-label">Script Pubkey</div><div class="hash-row" style="margin-top:5px"><span class="hash-value break-all" style="white-space:normal">${esc(z.script_pubkey)}</span><button class="hash-copy" onclick="copyToClipboard('${esc(z.script_pubkey)}',this)">copy</button></div></div>`;
+    if (z.commitment && z.commitment.status === 'exists') {
+        const c = z.commitment.value;
+        h += '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);display:flex;flex-direction:column;gap:9px"><div class="detail-label">Commitment</div>';
+        if (c.onchain) {
+            if (c.onchain.state_root) h += field('State Root', c.onchain.state_root);
+            if (c.onchain.prev_root) h += field('Prev Root', c.onchain.prev_root);
+            if (c.onchain.rolling_hash) h += field('Rolling Hash', c.onchain.rolling_hash);
+            if (c.onchain.block_height) h += field('Block Height', '#' + c.onchain.block_height);
+        }
+        if (c.receipt_hash) h += field('Receipt Hash', c.receipt_hash);
+        h += '</div>';
+    }
+    if (z.delegate && z.delegate.status === 'exists') {
+        const d = z.delegate.value;
+        h += '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);display:flex;flex-direction:column;gap:9px"><div class="detail-label">Delegate</div>';
+        h += field('Script Pubkey', d.script_pubkey);
+        if (d.data) h += field('Data', d.data);
+        h += '</div>';
+    }
+    if (z.data) {
+        h += `<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle)"><div class="detail-label">Data</div><pre class="code-block" style="margin-top:5px">${esc(z.data)}</pre></div>`;
+    }
+    h += '</div></div>';
+    return h;
+}
+
+function sovClass(s) {
+    if (s === 'sovereign') return { label: 'Sovereign', cls: 'status-committed' };
+    if (s === 'pending') return { label: 'Pending', cls: 'status-staged' };
+    return { label: 'Dependent', cls: 'status-pending' };
+}
+
+function badgeInfo(b) {
+    if (b === 'orange') return {
+        icon: ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:middle;color:var(--accent)"><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/></svg>',
+        tag: '<span class="status-badge status-committed" style="background:var(--accent-dim);color:var(--accent)">Verified</span>'
+    };
+    if (b === 'unverified') return {
+        icon: '',
+        tag: '<span class="status-badge status-pending">Unverified</span>'
+    };
+    return { icon: '', tag: '' };
+}
+
+function field(label, value) {
+    const v=String(value);
+    return `<div class="hash-row"><span class="hash-label" style="width:auto;min-width:60px">${esc(label)}</span><span class="hash-value break-all" style="white-space:normal">${esc(v)}</span><button class="hash-copy" onclick="copyToClipboard('${esc(v)}',this)">copy</button></div>`;
+}
+
+function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+</script>
+{% endblock %}

@@ -1,0 +1,929 @@
+{% extends "base.html" %}
+{% block title %}{{ space.space }} - subsd{% endblock %}
+{% block nav_dashboard_cls %}active{% endblock %}
+
+{% block topbar_left %}
+<a href="/" class="topbar-back">← back</a>
+<div class="topbar-divider"></div>
+<span class="topbar-title">{{ space.space }}</span>
+{% if space.has_groth16 %}<span class="status-badge status-committed" style="margin-left:8px">SNARK</span>{% endif %}
+{% if space.has_receipt %}<span class="status-badge status-published" style="margin-left:8px">STARK</span>{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="anim" style="display:flex;flex-direction:column;gap:16px">
+
+    {% match space.health_warning %}
+    {% when Some with (w) %}
+    <div class="alert alert-warning anim" style="animation-delay:.02s">
+        <div class="flex items-center gap-2" style="font-weight:600;margin-bottom:8px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+            </svg>
+            Untracked On-Chain Commitment
+        </div>
+        <p style="margin:0 0 10px;font-size:13px;line-height:1.5">{{ w.message }}</p>
+        <div style="display:flex;flex-direction:column;gap:6px;font-family:var(--mono);font-size:12px">
+            <div class="hash-row">
+                <span class="hash-label" style="width:auto;min-width:90px">Commitment Root</span>
+                <span class="hash-value break-all" style="white-space:normal; background:#1b1813;">{{ w.chain_root }}</span>
+                <button class="hash-copy" onclick="copyToClipboard('{{ w.chain_root }}',this)">copy</button>
+            </div>
+            <div style="color:var(--text-muted)">Block Height: <strong style="color:var(--text-primary)">#{{ w.block_height }}</strong></div>
+            {% if w.can_rollback %}
+            <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
+                <button onclick="rollbackCommitment()" class="btn-primary" style="font-size:12px;padding:6px 14px">Rollback Commitment</button>
+                <span style="font-size:11px;color:var(--text-muted)">{{ w.blocks_until_finalized }} blocks until finalized</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% when None %}
+    {% endmatch %}
+
+    <div style="display:flex;flex-direction:column;gap:16px" {% match space.health_warning %}{% when Some with (_w) %}class="space-disabled"{% when None %}{% endmatch %}>
+    <!-- Summary Bar -->
+    <div class="summary-bar anim" style="animation-delay:.04s">
+        <div class="summary-stats">
+            <div class="summary-stat total">
+                <span class="num">{{ space.total_handles }}</span>
+                <span class="lbl">handles</span>
+            </div>
+            <div class="summary-sep"></div>
+            <div class="summary-stat committed">
+                <span class="num">{{ space.committed_handles }}</span>
+                <span class="lbl">committed</span>
+            </div>
+            <div class="summary-stat staged">
+                <span class="num">{{ space.staged_handles }}</span>
+                <span class="lbl">staged</span>
+            </div>
+            {% if space.parked_handles > 0 %}
+            <div class="summary-stat" style="--c:var(--yellow)">
+                <span class="num" style="color:var(--yellow)">{{ space.parked_handles }}</span>
+                <span class="lbl">parked</span>
+            </div>
+            {% endif %}
+            <div class="summary-sep"></div>
+            <div class="summary-stat commits">
+                <span class="num">{{ space.commitments }}</span>
+                <span class="lbl">commits</span>
+            </div>
+        </div>
+        <div class="summary-actions">
+            <button id="publishBar" onclick="publishCerts()" class="publish-btn hidden">
+                ⊕ <span id="publishLabel">Publish</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Pipeline -->
+    <div class="card anim" style="animation-delay:.1s">
+        <div class="section-header">
+            <h3>Commitment Pipeline</h3>
+            <button onclick="refreshPipeline()" class="btn-sm">↻ Refresh</button>
+        </div>
+        <div class="section-body">
+            <div id="pipelineStepper" style="color:var(--text-muted);font-size:13px">Loading...</div>
+            <div id="pipelineMessage" style="margin-top:12px;font-size:13px;color:var(--text-muted)"></div>
+            <div id="pipelineActions" style="margin-top:16px"></div>
+            <div id="provingEndpoint" style="margin-top:10px;font-size:11px"></div>
+        </div>
+    </div>
+
+    <!-- Handles -->
+    <div class="card anim" style="animation-delay:.16s">
+        <div class="section-header">
+            <div class="flex items-center gap-3">
+                <h3>Handles</h3>
+                <div id="handlesPagination" class="flex items-center gap-2" style="font-size:11px"></div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="showAddMode('single')" id="addSingleBtn" class="add-btn">+ Add</button>
+                <button onclick="showAddMode('bulk')" id="addBulkBtn" class="btn-sm">Bulk Import</button>
+            </div>
+        </div>
+
+        <!-- Single Add Form -->
+        <div id="singleAddForm" class="stage-form hidden">
+            <form id="addHandleForm" class="stage-form-inner">
+                <div class="flex items-end gap-3">
+                    <div class="flex-1">
+                        <label class="form-label">Handle</label>
+                        <div class="flex">
+                            <input type="text" id="stageHandle" placeholder="alice" class="input-field with-suffix flex-1" required>
+                            <span class="input-suffix">{{ space.space }}</span>
+                        </div>
+                    </div>
+                    <div id="scriptPubkeyField" class="flex-1 hidden">
+                        <label class="form-label">Script Pubkey</label>
+                        <input type="text" id="stageScriptPubkey" placeholder="5120..." class="input-field w-full font-mono">
+                    </div>
+                    <button type="button" onclick="toggleScriptPubkey()" class="btn-sm" title="Custom script pubkey">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                    </button>
+                    <button type="submit" class="btn-primary">Stage</button>
+                </div>
+            </form>
+            <div id="stageResult" class="hidden" style="margin-top:10px"></div>
+        </div>
+
+        <!-- Bulk Import Form -->
+        <div id="bulkImportForm" class="stage-form hidden">
+            <div class="stage-form-inner">
+                <div id="bulkDropZone" class="bulk-drop-zone">
+                    <input type="file" id="bulkFileInput" accept=".json" style="display:none" onchange="handleBulkFile(this.files[0])">
+                    <div class="bulk-drop-content">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        <span style="font-size:13px;color:var(--text-secondary)">Drop a JSON file or <button type="button" onclick="$('bulkFileInput').click()" style="color:var(--accent);background:none;border:none;cursor:pointer;font-size:13px;font-family:var(--sans);text-decoration:underline">browse</button></span>
+                        <span style="font-size:11px;color:var(--text-muted);font-family:var(--mono)">[{"handle": "alice{{ space.space }}", "script_pubkey": "5120..."}]</span>
+                    </div>
+                </div>
+                <div id="bulkPreview" class="hidden" style="margin-top:12px">
+                    <div class="flex items-center justify-between" style="margin-bottom:8px">
+                        <span id="bulkPreviewCount" style="font-size:13px;color:var(--text-secondary)"></span>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="clearBulkFile()" class="btn-sm">Clear</button>
+                            <button type="button" onclick="submitBulkFile()" class="btn-primary">Stage All</button>
+                        </div>
+                    </div>
+                    <pre id="bulkPreviewContent" class="code-block" style="max-height:160px;overflow:auto;font-size:11px"></pre>
+                </div>
+                <div id="bulkResult" class="hidden" style="margin-top:10px"></div>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+            <div class="search-wrap">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="text" id="handleSearch" class="search-input" placeholder="Search handles…" oninput="onSearchInput()">
+            </div>
+            <div class="filter-tabs" id="filterPills">
+                <button onclick="setFilter(null)" class="filter-tab active" data-filter="">All</button>
+                <button onclick="setFilter('staged')" class="filter-tab" data-filter="staged">Staged</button>
+                <button onclick="setFilter('committed')" class="filter-tab" data-filter="committed">Committed</button>
+                <button onclick="setFilter('parked')" class="filter-tab" data-filter="parked">Parked</button>
+                <button onclick="setFilter('published')" class="filter-tab" data-filter="published">Published</button>
+                <button onclick="setFilter('unpublished')" class="filter-tab" data-filter="unpublished">Unpublished</button>
+            </div>
+        </div>
+
+        <!-- Select All Banner -->
+        <div id="selectAllBanner" class="select-banner hidden">
+            All <strong id="bannerPageCount">0</strong> on this page selected.
+            <button onclick="selectAllMatching()">Select all <strong id="bannerTotalCount">0</strong> matching</button>
+        </div>
+
+        <!-- Table -->
+        <table class="handles-table">
+            <thead><tr>
+                <th style="width:34px;padding-left:17px"><input type="checkbox" id="selectAllPage" onchange="togglePageSelection(this.checked)" class="handle-checkbox"></th>
+                <th>Handle</th>
+                <th>Script Pubkey</th>
+                <th>Batch</th>
+                <th>Status</th>
+            </tr></thead>
+            <tbody id="handlesBody">
+                <tr><td colspan="5" style="padding:30px 17px;text-align:center;color:var(--text-muted);font-size:13px">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Bulk Action Bar -->
+    <div id="bulkActionBar" class="bulk-bar hidden">
+        <div class="bulk-bar-inner">
+            <span class="bulk-bar-count"><strong id="bulkCount">0</strong> selected</span>
+            <span class="bulk-bar-sep"></span>
+            <div id="bulkButtons" class="flex items-center gap-2"></div>
+            <span class="bulk-bar-sep"></span>
+            <button onclick="clearSelection()" class="btn-sm">Clear</button>
+        </div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="card anim" style="animation-delay:.22s">
+        <div class="section-header"><h3>Activity Log</h3></div>
+        <div class="section-body">
+            <div id="actionsLog" class="activity-log scrollbar-thin">
+                <p style="color:var(--text-muted)">No activity yet</p>
+            </div>
+        </div>
+    </div>
+    </div><!-- /space-disabled wrapper -->
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const space = '{{ space.space }}';
+const spaceUrl = `/spaces/${encodeURIComponent(space)}`;
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let currentPage = 1;
+let perPage = 20;
+let currentPipeline = null;
+let provingPollActive = false;
+let currentFilter = null;
+let searchTimeout = null;
+let selectedHandles = new Set();
+let selectAllMode = false;
+let lastTotal = 0;
+let pageHandleNames = [];
+let handleMeta = {};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function esc(t) {
+    const d = document.createElement('div');
+    d.textContent = t;
+    return d.innerHTML;
+}
+
+function $(id) { return document.getElementById(id); }
+
+async function api(path, opts) {
+    const r = await fetch(path, opts);
+    const j = await r.json();
+    return { ok: r.ok, data: j };
+}
+
+function postJson(path, body) {
+    return api(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+}
+
+function logAction(msg) {
+    const log = $('actionsLog');
+    const t = new Date().toLocaleTimeString();
+    const p = document.createElement('p');
+    p.className = 'anim';
+    p.textContent = `[${t}] ${msg}`;
+    log.insertBefore(p, log.firstChild);
+    const placeholder = log.querySelector('p[style]');
+    if (placeholder && placeholder.textContent === 'No activity yet') placeholder.remove();
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
+const STAGE_SVG = {
+    clock: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+    plus:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4.5v15m7.5-7.5h-15"/></svg>',
+    check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>',
+};
+
+const PIPELINE_STEPS = [
+    { key: 'local',     label: 'Local',     svg: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/></svg>' },
+    { key: 'proving',   label: 'Proving',   svg: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>' },
+    { key: 'broadcast', label: 'Broadcast', svg: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>' },
+    { key: 'confirmed', label: 'Confirmed', svg: STAGE_SVG.check },
+    { key: 'finalized', label: 'Finalized', svg: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' },
+];
+
+async function refreshPipeline() {
+    try {
+        const { data: j } = await api(`${spaceUrl}/pipeline`);
+        currentPipeline = j;
+        const stepper = $('pipelineStepper');
+        const msg = $('pipelineMessage');
+        const actions = $('pipelineActions');
+
+        updatePublishBar(j.unpublished || 0);
+
+        if (!j.has_pending) {
+            const sc = j.staged_count || 0;
+            if (sc > 0) {
+                stepper.innerHTML = `<div class="flex items-center gap-3">
+                    <div class="stage-icon active">${STAGE_SVG.clock}</div>
+                    <span style="font-size:13px;color:var(--text-secondary)">
+                        <strong style="color:var(--text-primary)">${sc}</strong> handle${sc > 1 ? 's' : ''} staged
+                    </span></div>`;
+                actions.innerHTML = '<button onclick="commitLocal()" class="btn-primary">Commit Local</button>';
+            } else {
+                stepper.innerHTML = `<div class="flex items-center gap-3">
+                    <div class="stage-icon waiting">${STAGE_SVG.plus}</div>
+                    <span style="font-size:13px;color:var(--text-muted)">Stage handles to start a new commitment</span></div>`;
+                actions.innerHTML = '';
+            }
+            msg.textContent = '';
+            $('provingEndpoint').innerHTML = '';
+            loadHandles(currentPage);
+            return;
+        }
+
+        renderStepper(j);
+        renderMessage(j.message, msg);
+        renderActions(j);
+        $('provingEndpoint').innerHTML = '';
+
+        if (j.steps.proving === 'in_progress' && j.prover_configured) {
+            if (!provingPollActive) {
+                provingPollActive = true;
+                setTimeout(refreshPipeline, 5000);
+            }
+        } else {
+            provingPollActive = false;
+        }
+        loadHandles(currentPage);
+    } catch (e) {
+        $('pipelineStepper').innerHTML = `<span style="color:var(--red);font-size:13px">${e.message}</span>`;
+    }
+}
+
+function renderMessage(msg, el) {
+    if (!msg) { el.innerHTML = ''; return; }
+    const m = msg.match(/^(\d+)\/(\d+)\s+confirmations$/);
+    if (m) {
+        const cur = parseInt(m[1]), max = parseInt(m[2]);
+        const pct = Math.min((cur / max) * 100, 100);
+        el.innerHTML = `<div class="progress-row">
+            <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <div class="progress-label"><span>${cur}</span> / ${max} blocks</div></div>`;
+    } else {
+        el.textContent = msg;
+    }
+}
+
+function renderStepper(r) {
+    const visible = PIPELINE_STEPS.filter(s => r.steps[s.key] !== 'skipped');
+    let h = '<div class="pipeline-stages">';
+
+    visible.forEach((s, i) => {
+        const st = r.steps[s.key];
+
+        // Connector between stages
+        if (i > 0) {
+            const prev = r.steps[visible[i - 1].key];
+            const filled = prev === 'complete';
+            const partial = filled && st !== 'complete';
+            h += `<div class="stage-connector${partial ? ' partial' : ''}">
+                ${filled ? '<div class="fill"></div>' : ''}</div>`;
+        }
+
+        // Stage icon + label
+        const iconCls = st === 'complete' ? 'done'
+            : st === 'in_progress' ? 'active shimmer' : 'waiting';
+        const labelCls = st === 'complete' ? 'done-l'
+            : st === 'in_progress' ? 'active-l' : '';
+        const icon = st === 'complete' ? STAGE_SVG.check : s.svg;
+
+        h += `<div class="stage">
+            <div class="stage-icon ${iconCls}">${icon}</div>
+            <div class="stage-label ${labelCls}">${s.label}</div></div>`;
+    });
+    h += '</div>';
+
+    // Commitment detail
+    if (r.commitment_idx != null) {
+        h += `<div class="commitment-detail">
+            <span class="commitment-tag">Commitment #${r.commitment_idx}</span>`;
+        if (r.root) h += `<div class="hash-row"><span class="hash-label">Root</span>
+            <span class="hash-value">${r.root}</span>
+            <button class="hash-copy" onclick="copyToClipboard('${r.root}',this)">copy</button></div>`;
+        if (r.txid) h += `<div class="hash-row"><span class="hash-label">Txid</span>
+            <span class="hash-value">${r.txid}</span>
+            <button class="hash-copy" onclick="copyToClipboard('${r.txid}',this)">copy</button></div>`;
+        h += '</div>';
+    }
+
+    $('pipelineStepper').innerHTML = h;
+}
+
+function renderActions(r) {
+    const el = $('pipelineActions');
+    let h = '';
+
+    if (r.current_step === 'proving') {
+        if (r.prover_configured) {
+            if (r.proving_job_active) {
+                const total = r.pending_proofs || 0;
+                h += `<div class="flex items-center gap-2" style="color:var(--accent)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="animate-spin">
+                        <circle opacity="0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                        <path opacity="0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <span style="font-size:13px">Generating proof...
+                        <span style="color:var(--text-muted)">(${total} pending)</span></span></div>`;
+            }
+            if (r.estimate) {
+                h += '<div style="margin-top:10px;padding:12px;background:var(--bg-base);border:1px solid var(--border-subtle);border-radius:8px">';
+                for (const [k, v] of Object.entries(r.estimate)) {
+                    if (v == null || typeof v === 'object') continue;
+                    const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    const val = typeof v === 'number' ? v.toLocaleString() : String(v);
+                    h += `<div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-bottom:2px">
+                        <span>${esc(label)}:</span> <span style="color:var(--text-secondary)">${esc(val)}</span></div>`;
+                }
+                h += '</div>';
+            }
+            if (!r.proving_job_active) {
+                h += `<div class="flex gap-3" style="margin-top:10px">
+                    <button onclick="startProving()" class="btn-primary">Prove</button>
+                    <button onclick="rollbackLocal()" class="btn-secondary">Rollback</button></div>`;
+            } else {
+                h += '<button onclick="rollbackLocal()" class="btn-sm" style="margin-top:10px">Rollback Local</button>';
+            }
+        } else {
+            h += `<div class="alert alert-warning">
+                <div class="flex items-center gap-2" style="font-weight:600;margin-bottom:4px">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
+                    Prover not configured</div>
+                <p style="font-size:12px;color:var(--text-muted)">Run <span style="color:var(--text-primary)">subs-prover --server</span>
+                    and configure the endpoint in <a href="/ui/settings" style="color:var(--accent)">Settings</a>.</p></div>`;
+        }
+    } else if (r.current_step === 'broadcast') {
+        h += `<div class="flex gap-3">
+            <button onclick="broadcast()" class="btn-primary">Broadcast On-Chain</button>
+            <button onclick="rollbackLocal()" class="btn-secondary">Rollback</button></div>`;
+    }
+
+    el.innerHTML = h;
+}
+
+function updatePublishBar(n) {
+    const bar = $('publishBar');
+    if (n > 0) {
+        const batch = Math.min(n, 100);
+        const label = batch < n ? `${batch}/${n}` : `${n}`;
+        bar.innerHTML = `⊕ Publish <span class="count">${label}</span>`;
+        bar.classList.remove('hidden');
+    } else {
+        bar.classList.add('hidden');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline actions
+// ---------------------------------------------------------------------------
+async function commitLocal() {
+    logAction('Committing...');
+    try {
+        const { ok, data } = await postJson(`${spaceUrl}/commit`, { dry_run: false });
+        if (ok) { logAction(`Committed ${data.handles_committed} handles`); location.reload(); }
+        else logAction(`Error: ${JSON.stringify(data)}`);
+    } catch (e) { logAction(e.message); }
+}
+
+async function broadcast() {
+    openFeeModal(null, async (feeRate) => {
+        logAction(`Broadcasting${feeRate ? ' at ' + feeRate + ' sat/vB' : ''}...`);
+        try {
+            const { ok, data } = await postJson(`${spaceUrl}/broadcast`, feeRate ? { fee_rate: feeRate } : {});
+            if (ok) { logAction(`TX: ${data.txid}`); refreshPipeline(); }
+            else logAction(`Error: ${data.error || JSON.stringify(data)}`);
+        } catch (e) { logAction(e.message); }
+    });
+}
+
+async function rollbackCommitment() {
+    openFeeModal(null, async (feeRate) => {
+        const params = [walletName, {
+            requests: [{ request: 'commit', subject: space, root: null }],
+            fee_rate: toRpcFeeRate(feeRate),
+            force: false,
+            confirmed_only: false,
+            skip_tx_check: false,
+        }];
+        try {
+            const r = await fetch('/rpc/spaced', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ method: 'walletsendrequest', params })
+            });
+            const data = await r.json();
+            if (data.result) {
+                alert('Rollback transaction submitted. Reload the page after confirmation.');
+                location.reload();
+            } else {
+                alert('Rollback failed: ' + JSON.stringify(data.error || data));
+            }
+        } catch (e) {
+            alert('Rollback failed: ' + e.message);
+        }
+    });
+}
+
+async function startProving() {
+    logAction('Submitting proving request...');
+    try {
+        const { ok, data } = await api(`${spaceUrl}/proving/push`, { method: 'POST' });
+        if (ok && data.success) { logAction(`Proving job submitted: ${data.job_id}`); refreshPipeline(); }
+        else logAction(`Error: ${data.message || JSON.stringify(data)}`);
+    } catch (e) { logAction(e.message); }
+}
+
+async function rollbackLocal() {
+    if (!confirm('Rollback the last local commitment? Handles will return to staged.')) return;
+    logAction('Rolling back...');
+    try {
+        const { ok, data } = await postJson(`${spaceUrl}/rollback-local`, {});
+        if (ok) { logAction('Rolled back successfully'); location.reload(); }
+        else logAction(`Error: ${data.error || JSON.stringify(data)}`);
+    } catch (e) { logAction(e.message); }
+}
+
+async function publishCerts() {
+    logAction('Publishing certificates...');
+    try {
+        const { ok, data } = await api(`${spaceUrl}/publish`, { method: 'POST' });
+        if (ok) {
+            const msg = data.handles_published > 0
+                ? `Published ${data.handles_published} certificate${data.handles_published > 1 ? 's' : ''}${data.remaining > 0 ? ` (${data.remaining} remaining)` : ''}`
+                : 'None to publish';
+            logAction(msg);
+            refreshPipeline();
+        } else {
+            logAction(`Error: ${data.error || JSON.stringify(data)}`);
+        }
+    } catch (e) { logAction(e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Handles table
+// ---------------------------------------------------------------------------
+function setFilter(f) {
+    currentFilter = f;
+    currentPage = 1;
+    document.querySelectorAll('.filter-tab').forEach(b => {
+        const bf = b.dataset.filter;
+        b.className = (f === null && bf === '') || bf === f ? 'filter-tab active' : 'filter-tab';
+    });
+    loadHandles(1);
+}
+
+function onSearchInput() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => { currentPage = 1; loadHandles(1); }, 300);
+}
+
+async function loadHandles(pg = 1) {
+    currentPage = pg;
+    const errRow = msg => `<tr><td colspan="5" style="padding:30px 17px;text-align:center;color:var(--red);font-size:13px">${msg}</td></tr>`;
+    try {
+        const q = new URLSearchParams({ page: pg, per_page: perPage });
+        const search = $('handleSearch')?.value?.trim();
+        if (search) q.set('search', search);
+        if (currentFilter) q.set('filter', currentFilter);
+
+        const r = await fetch(`${spaceUrl}/handles?${q}`);
+        if (!r.ok) { $('handlesBody').innerHTML = errRow('Failed to load handles'); return; }
+        const data = await r.json();
+        renderTable(data);
+        renderPagination(data);
+    } catch (e) {
+        $('handlesBody').innerHTML = errRow(e.message);
+    }
+}
+
+function badge(h) {
+    const extra = pubBadge(h.publish_status) + parkedBadge(h);
+    if (!h.commitment_root) return '<span class="status-badge status-staged">Staged</span>' + extra;
+
+    if (currentPipeline && currentPipeline.root === h.commitment_root) {
+        const s = currentPipeline.steps;
+        if (s.finalized === 'complete')                          return '<span class="status-badge status-finalized">Finalized</span>' + extra;
+        if (s.confirmed === 'complete' || s.confirmed === 'in_progress') return '<span class="status-badge status-confirming">Confirming</span>' + extra;
+        if (s.broadcast === 'complete' || s.broadcast === 'in_progress') return '<span class="status-badge status-broadcast">Broadcast</span>' + extra;
+        if (s.proving === 'in_progress')                         return '<span class="status-badge status-proving">Proving</span>' + extra;
+        return '<span class="status-badge status-pending">Pending</span>' + extra;
+    }
+    return '<span class="status-badge status-finalized">Finalized</span>' + extra;
+}
+
+function pubBadge(s) {
+    if (s === 'final') return ' <span class="status-badge status-published">Published</span>';
+    if (s === 'temp')  return ' <span class="status-badge status-temp">Temp Cert</span>';
+    return '';
+}
+
+function parkedBadge(h) {
+    return h.parked ? ' <span class="status-badge status-parked">Parked</span>' : '';
+}
+
+function renderTable(r) {
+    const tbody = $('handlesBody');
+    pageHandleNames = [];
+    lastTotal = r.total || 0;
+
+    if (!r.handles || !r.handles.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="padding:30px 17px;text-align:center;color:var(--text-muted);font-size:13px">No handles</td></tr>';
+        updateBulkBar();
+        return;
+    }
+
+    pageHandleNames = r.handles.map(h => h.name);
+    r.handles.forEach(h => {
+        handleMeta[h.name] = { staged: !h.commitment_root, parked: !!h.parked, published: !!h.publish_status };
+    });
+
+    tbody.innerHTML = r.handles.map(h => {
+        const chk = selectedHandles.has(h.name) || selectAllMode ? 'checked' : '';
+        const href = `/ui/spaces/${encodeURIComponent(space)}/handles/${encodeURIComponent(h.name)}`;
+        const spk = h.script_pubkey;
+        return `<tr style="cursor:pointer" onclick="location.href='${href}'">
+            <td style="padding-left:17px" onclick="event.stopPropagation()">
+                <input type="checkbox" ${chk} onchange="toggleHandle('${esc(h.name)}',this.checked)" class="handle-checkbox"></td>
+            <td><span class="handle-name">${esc(h.name)}</span></td>
+            <td><span class="handle-pubkey" title="${spk}">${spk.slice(0, 16)}…${spk.slice(-8)}</span></td>
+            <td><span class="handle-batch">${h.commitment_idx != null ? '#' + h.commitment_idx : '-'}</span></td>
+            <td>${badge(h)}</td></tr>`;
+    }).join('');
+
+    const hdr = $('selectAllPage');
+    if (hdr) hdr.checked = selectAllMode || pageHandleNames.every(n => selectedHandles.has(n));
+    updateBulkBar();
+}
+
+function renderPagination(r) {
+    const el = $('handlesPagination');
+    if (r.total_pages <= 1) {
+        el.innerHTML = `<span style="color:var(--text-muted)">${r.total} handle${r.total !== 1 ? 's' : ''}</span>`;
+        return;
+    }
+    el.innerHTML = `<span style="color:var(--text-muted)">${r.total} handles</span>
+        <div class="flex items-center gap-1" style="margin-left:10px">
+            <button onclick="loadHandles(${currentPage - 1})" class="btn-sm" ${currentPage <= 1 ? 'disabled' : ''}>&larr;</button>
+            <span style="color:var(--text-muted);font-family:var(--mono);font-size:11px;padding:0 6px">${r.page}/${r.total_pages}</span>
+            <button onclick="loadHandles(${currentPage + 1})" class="btn-sm" ${currentPage >= r.total_pages ? 'disabled' : ''}>&rarr;</button></div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Add forms
+// ---------------------------------------------------------------------------
+let currentAddMode = null;
+let bulkFileData = null;
+
+function showAddMode(mode) {
+    const single = $('singleAddForm');
+    const bulk = $('bulkImportForm');
+
+    if (currentAddMode === mode) {
+        single.classList.add('hidden');
+        bulk.classList.add('hidden');
+        currentAddMode = null;
+        return;
+    }
+
+    currentAddMode = mode;
+    single.classList.toggle('hidden', mode !== 'single');
+    bulk.classList.toggle('hidden', mode !== 'bulk');
+}
+
+function toggleScriptPubkey() { $('scriptPubkeyField').classList.toggle('hidden'); }
+
+function showStageResult(msg, ok) {
+    const el = $('stageResult');
+    el.className = `alert ${ok ? 'alert-success' : 'alert-error'}`;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    if (ok) setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+function showBulkResult(msg, ok) {
+    const el = $('bulkResult');
+    el.className = `alert ${ok ? 'alert-success' : 'alert-error'}`;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    if (ok) setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+$('addHandleForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = $('stageHandle').value.trim();
+    const spk = $('stageScriptPubkey').value.trim();
+    const handle = name + '{{ space.space }}';
+    const reqs = [{ handle, script_pubkey: spk || undefined }];
+
+    if (!spk) {
+        try {
+            const { ok, data } = await postJson('/requests/generate', { handle });
+            if (!ok) { showStageResult(JSON.stringify(data.error || 'Failed'), false); return; }
+            reqs[0] = data.request;
+        } catch (e) { showStageResult(e.message, false); return; }
+    }
+
+    try {
+        const { ok, data } = await postJson('/requests', { requests: reqs });
+        if (ok) {
+            showStageResult(`Staged ${handle}`, true);
+            $('stageHandle').value = '';
+            $('stageScriptPubkey').value = '';
+            refreshPipeline();
+            loadHandles(currentPage);
+        } else {
+            showStageResult(data.error || JSON.stringify(data), false);
+        }
+    } catch (e) { showStageResult(e.message, false); }
+});
+
+// ---------------------------------------------------------------------------
+// Bulk import (file upload)
+// ---------------------------------------------------------------------------
+function handleBulkFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const parsed = JSON.parse(e.target.result);
+            const reqs = Array.isArray(parsed) ? parsed : (parsed.requests || [parsed]);
+            if (!reqs.length) { showBulkResult('No requests found in file', false); return; }
+            bulkFileData = reqs;
+            $('bulkPreviewCount').textContent = `${reqs.length} handle${reqs.length > 1 ? 's' : ''} from ${esc(file.name)}`;
+            const preview = reqs.slice(0, 5).map(r => r.handle || '?');
+            let txt = preview.join('\n');
+            if (reqs.length > 5) txt += `\n... and ${reqs.length - 5} more`;
+            $('bulkPreviewContent').textContent = txt;
+            $('bulkPreview').classList.remove('hidden');
+            $('bulkDropZone').classList.add('hidden');
+        } catch (err) {
+            showBulkResult(`Invalid JSON: ${err.message}`, false);
+        }
+    };
+    reader.readAsText(file);
+}
+
+function clearBulkFile() {
+    bulkFileData = null;
+    $('bulkFileInput').value = '';
+    $('bulkPreview').classList.add('hidden');
+    $('bulkDropZone').classList.remove('hidden');
+}
+
+async function submitBulkFile() {
+    if (!bulkFileData || !bulkFileData.length) return;
+    try {
+        const { ok, data } = await postJson('/requests', { requests: bulkFileData });
+        if (ok) {
+            showBulkResult(`Staged ${data.total_added} handle(s)`, true);
+            clearBulkFile();
+            refreshPipeline();
+            loadHandles(currentPage);
+        } else {
+            showBulkResult(data.error || JSON.stringify(data), false);
+        }
+    } catch (e) { showBulkResult(e.message, false); }
+}
+
+// Drag-and-drop
+(function() {
+    const zone = $('bulkDropZone');
+    ['dragenter','dragover'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('drag-over'); }));
+    ['dragleave','drop'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('drag-over'); }));
+    zone.addEventListener('drop', e => { if (e.dataTransfer.files.length) handleBulkFile(e.dataTransfer.files[0]); });
+})();
+
+// ---------------------------------------------------------------------------
+// Selection & bulk actions
+// ---------------------------------------------------------------------------
+function toggleHandle(name, checked) {
+    selectAllMode = false;
+    if (checked) selectedHandles.add(name); else selectedHandles.delete(name);
+    const hdr = $('selectAllPage');
+    if (hdr) hdr.checked = pageHandleNames.length > 0 && pageHandleNames.every(n => selectedHandles.has(n));
+    updateBulkBar();
+}
+
+function togglePageSelection(checked) {
+    selectAllMode = false;
+    pageHandleNames.forEach(n => { if (checked) selectedHandles.add(n); else selectedHandles.delete(n); });
+    document.querySelectorAll('#handlesBody input[type=checkbox]').forEach(cb => cb.checked = checked);
+
+    const banner = $('selectAllBanner');
+    if (checked && lastTotal > pageHandleNames.length) {
+        $('bannerPageCount').textContent = pageHandleNames.length;
+        $('bannerTotalCount').textContent = lastTotal;
+        banner.classList.remove('hidden');
+    } else {
+        banner.classList.add('hidden');
+    }
+    updateBulkBar();
+}
+
+function selectAllMatching() {
+    selectAllMode = true;
+    document.querySelectorAll('#handlesBody input[type=checkbox]').forEach(cb => cb.checked = true);
+    $('selectAllBanner').classList.add('hidden');
+    updateBulkBar();
+}
+
+function clearSelection() {
+    selectAllMode = false;
+    selectedHandles.clear();
+    document.querySelectorAll('#handlesBody input[type=checkbox]').forEach(cb => cb.checked = false);
+    const hdr = $('selectAllPage');
+    if (hdr) hdr.checked = false;
+    $('selectAllBanner').classList.add('hidden');
+    updateBulkBar();
+}
+
+function updateBulkBar() {
+    const n = selectAllMode ? lastTotal : selectedHandles.size;
+    const bar = $('bulkActionBar');
+    const btns = $('bulkButtons');
+    $('bulkCount').textContent = n;
+
+    if (n <= 0) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+
+    let allStaged = true, allParked = true, noneParked = true;
+    let allPublished = true, nonePublished = true;
+
+    if (selectAllMode) {
+        const f = currentFilter;
+        allStaged     = !f || f === 'staged' || f === 'parked';
+        allParked     = f === 'parked';
+        noneParked    = f === 'staged' || f === 'unpublished' || f === 'committed';
+        allPublished  = f === 'published';
+        nonePublished = f === 'unpublished' || f === 'staged' || f === 'parked';
+    } else {
+        for (const name of selectedHandles) {
+            const m = handleMeta[name];
+            if (!m) continue;
+            if (!m.staged)    allStaged = false;
+            if (!m.parked)    allParked = false;
+            if (m.parked)     noneParked = false;
+            if (!m.published) allPublished = false;
+            if (m.published)  nonePublished = false;
+        }
+    }
+
+    const btn = (label, action) => `<button onclick="bulkAction('${action}')" class="btn-sm">${label}</button>`;
+    let h = '';
+    if (allStaged) {
+        if (noneParked)       h += btn('Park', 'park');
+        else if (allParked)   h += btn('Unpark', 'unpark');
+        else                  h += btn('Park', 'park') + btn('Unpark', 'unpark');
+        h += btn('Remove', 'remove');
+    }
+    h += btn(allPublished && !nonePublished ? 'Republish' : 'Publish', 'publish');
+    btns.innerHTML = h;
+}
+
+function getSelectionContext() {
+    const ctx = {};
+    if (selectAllMode) {
+        const s = $('handleSearch')?.value?.trim();
+        if (s) ctx.search = s;
+        if (currentFilter) ctx.filter = currentFilter;
+        ctx._count = lastTotal;
+    } else {
+        ctx.handles = [...selectedHandles];
+        ctx._count = ctx.handles.length;
+    }
+    return ctx;
+}
+
+async function bulkAction(action) {
+    if (action === 'remove') {
+        const count = selectAllMode ? lastTotal : selectedHandles.size;
+        if (!confirm(`Remove ${count} staged handle(s)? This cannot be undone.`)) return;
+    }
+
+    const ctx = getSelectionContext();
+    const n = ctx._count;
+    delete ctx._count;
+
+    const labels = { park: 'Parking', unpark: 'Unparking', publish: 'Publishing', remove: 'Removing' };
+    logAction(`${labels[action] || action} ${n} handle(s)...`);
+
+    try {
+        let url, body;
+        if (action === 'park' || action === 'unpark') {
+            url = `${spaceUrl}/park`;
+            body = { ...ctx, parked: action === 'park' };
+        } else if (action === 'remove') {
+            url = `${spaceUrl}/remove`;
+            body = { ...ctx };
+        } else {
+            url = `${spaceUrl}/publish`;
+            body = {};
+            if (!selectAllMode && ctx.handles) body.handles = ctx.handles;
+        }
+
+        const { ok, data } = await postJson(url, body);
+        if (ok) {
+            if (action === 'park' || action === 'unpark') logAction(`${action === 'park' ? 'Parked' : 'Unparked'} ${data.updated} handle(s)`);
+            else if (action === 'remove')                 logAction(`Removed ${data.removed} handle(s)`);
+            else                                          logAction(`Published ${data.handles_published} certificate(s)${data.remaining > 0 ? ' (' + data.remaining + ' remaining)' : ''}`);
+            clearSelection();
+            loadHandles(currentPage);
+            refreshPipeline();
+        } else {
+            logAction(`Error: ${data.error || JSON.stringify(data)}`);
+        }
+    } catch (e) { logAction(e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+refreshPipeline();
+</script>
+{% endblock %}

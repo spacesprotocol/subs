@@ -1,12 +1,13 @@
 <br />
 <p align="center">
-  <h2 align="center">subs</h2>
-  <p align="center">
+  <h2>subs</h2>
+  <p>
     🟠 <i>create, prove & verify Bitcoin handles off-chain</i>
     <br/>
    </p>
 </p>
 
+<img src="screenshot.png">
 
 ## How it works
 
@@ -24,7 +25,7 @@
 
 Note: Only the tree root gets committed to Bitcoin - certificates remain off-chain (low footprint!).
 
-See https://github.com/buffrr/SIP-XXX
+See https://spacesprotocol.org/paper
 
 
 ### Who gets to be the operator?
@@ -46,90 +47,46 @@ Install subs:
 ```
 git clone https://github.com/spacesprotocol/subs && cd subs
 cargo install --path subs
+cargo install --path prover
 ```
 
-For operators, use `--features metal` on macos or `cuda` for nvidia machines to enable GPU acceleration.
+For operators, use `--features cuda` on `subs-prover` for nvidia machines to enable GPU acceleration.
 
 ## Usage
 
-### For end users
-
-Example to request a handle:
+### 1. Start the prover server
 
 ```
-$ subs request alice@bitcoin
-✔ Created handle request
-   → alice@bitcoin.req.json
-   → Private key saved: alice@bitcoin.priv
-
-Submit the request file to @bitcoin operator to get a certificate.
+subs-prover --server --server-port 8888
 ```
 
-After getting a certificate, verify ownership:
+### 2. Start subs
+
+Point it at your `spaced` RPC and the wallet that will be used to operate spaces:
 
 ```
-$ subs verify alice@bitcoin.cert.json --root @bitcoin.cert.json
-✔ Certificate verified
-   → handle : alice@bitcoin
-   → genesis: 85d3a410db41b317b7c0310df64cefb6504482c0b5c7e8a36c992ed0dfdb38af
-   → anchor : dd101b1e3a52e97d2a71d518c7794ffc614260f39d38a307ae7274bc976b286b
+subs \
+  --rpc-url http://127.0.0.1:7225 \
+  --wallet my-wallet \
+  --data-dir ./data \
+  --port 7777
 ```
 
+Then open http://localhost:7777 in a browser. Under **Settings**, set the prover URL to `http://127.0.0.1:8888` so subs can dispatch proofs.
 
-### For operators
+From the UI you can stage handles, run local commits, broadcast on-chain commitments, and issue / export certificates.
 
-Add inclusion requests:
+### Test rig (local dev)
 
-```bash
-$ subs add alice@bitcoin.req.json
-# or all in a directory (files named <subspace>@<space>.req.json)
-$ subs add .
-```
-
-Commit changes:
+The `test-rig` feature spins up a fresh regtest `bitcoind` + `spaced` automatically, so no external setup is needed. Useful for hacking on subs without a live node.
 
 ```
-$ subs commit
+cargo install --path subs --features test-rig
+subs --test-rig --test-rig-dir ./testrig-data
 ```
 
-### Generating a root certificate (GPUs recommended)
-
-Proving is the operator's responsibility, and generates the root certificate for the space.
-
-To prove changes in the working directory:
-
-```
-$ subs prove
-```
-
-This will create a `@bitcoin.cert.json` with a STARK proof.
-
-
-### Compress (STARK → SNARK, requires x86 for now)
-
-```
-$ subs compress
-```
-
-This will update `@bitcoin.cert.json` to use a smaller SNARK receipt.
-
-
-### Issuing certificates
-
-```
-$ subs cert issue alice@bitcoin
-```
-
-
-## Using Remote provers
-
-If you have a bonsai API key, you can run the prover remotely.
-
-```bash
-BONSAI_API_KEY="YOUR_API_KEY" BONSAI_API_URL="BONSAI_URL" subs compress
-```
-
+`--wallet` and `--rpc-url` are not required in this mode. The rig persists chain data in `--test-rig-dir` so restarts keep state. The UI exposes an RPC console and a "mine N blocks" helper for driving the chain forward.
 
 ## License
 
-This project is licensed under the [Apache 2.0](LICENSE).
+Apache 2.0

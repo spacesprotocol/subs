@@ -9,3 +9,5 @@ target/
 *.subs.c
 *.sdb
 .idea
+testrig-data
+data
