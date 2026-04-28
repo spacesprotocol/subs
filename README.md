@@ -6,7 +6,7 @@
    </p>
 </p>
 
-<img src="screenshot.png">
+<img src="https://github.com/spacesprotocol/subs/blob/main/screenshot.png?raw=true">
 
 ## How it works
 
