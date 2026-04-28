@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}{{ handle }}{{ space }} - subsd{% endblock %}
+{% block nav_dashboard_cls %}active{% endblock %}
+
+{% block topbar_left %}
+<a href="/ui/spaces/{{ space|urlencode }}" class="topbar-back">← {{ space }}</a>
+<div class="topbar-divider"></div>
+<span class="topbar-title">{{ handle }}{{ space }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="anim" style="display:flex;flex-direction:column;gap:16px">
+
+    <!-- Handle Info -->
+    <div class="card anim" style="animation-delay:.04s">
+        <div class="section-header"><h3>Details</h3></div>
+        <div class="section-body" id="handleInfo" style="color:var(--text-muted);font-size:13px">Loading...</div>
+    </div>
+
+    <!-- Actions -->
+    <div id="actionsCard" class="card anim hidden" style="animation-delay:.1s">
+        <div class="section-header"><h3>Actions</h3></div>
+        <div class="section-body flex flex-wrap gap-3" id="handleActions"></div>
+        <div id="actionResult" class="hidden" style="padding:0 17px 17px"></div>
+    </div>
+
+    <!-- Query Result -->
+    <div id="queryCard" class="card anim hidden" style="animation-delay:.16s">
+        <div class="section-header">
+            <h3>Fabric Query</h3>
+            <button onclick="queryHandle()" class="btn-sm">↻ Refresh</button>
+        </div>
+        <div class="section-body" id="queryResult">
+            <pre class="code-block">Click "Query Fabric" to resolve this handle</pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const space = '{{ space }}';
+const handle = '{{ handle }}';
+const fullHandle = handle + space;
+let handleData = null;
+
+/* --- Helpers --- */
+
+function esc(t) {
+    const d = document.createElement('div');
+    d.textContent = t;
+    return d.innerHTML;
+}
+
+function statusBadge(h) {
+    if (!h.commitment_root) return '<span class="status-badge status-staged">Staged</span>';
+    return '<span class="status-badge status-committed">Committed</span>';
+}
+
+function pubBadge(s) {
+    if (s === 'final') return '<span class="status-badge status-published">Published</span>';
+    if (s === 'temp')  return '<span class="status-badge status-temp">Temp Cert</span>';
+    return '<span class="status-badge status-pending">Unpublished</span>';
+}
+
+function showResult(msg, ok) {
+    const el = document.getElementById('actionResult');
+    el.className = `alert ${ok ? 'alert-success' : 'alert-error'}`;
+    el.style.padding = '';
+    el.style.margin = '0 17px 17px';
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    if (ok) setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+/* --- Load & render --- */
+
+async function loadHandle() {
+    try {
+        const r = await fetch(`/spaces/${encodeURIComponent(space)}/handles/${encodeURIComponent(handle)}`);
+        if (!r.ok) {
+            document.getElementById('handleInfo').innerHTML = '<span style="color:var(--red)">Handle not found</span>';
+            return;
+        }
+        handleData = await r.json();
+        renderInfo(handleData);
+        renderActions(handleData);
+    } catch (e) {
+        document.getElementById('handleInfo').innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
+    }
+}
+
+function renderInfo(h) {
+    const info = document.getElementById('handleInfo');
+    info.innerHTML = `
+        <div class="detail-grid">
+            <div>
+                <div class="detail-label">Handle</div>
+                <div class="detail-value">${esc(h.name)}${esc(space)}</div>
+            </div>
+            <div>
+                <div class="detail-label">Status</div>
+                <div class="flex items-center gap-2">
+                    ${statusBadge(h)} ${pubBadge(h.publish_status)}
+                    ${h.parked ? ' <span class="status-badge status-parked">Parked</span>' : ''}
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:16px">
+            <div class="detail-label">Script Pubkey</div>
+            <div class="hash-row" style="margin-top:5px">
+                <span class="hash-value break-all" style="white-space:normal">${esc(h.script_pubkey)}</span>
+                <button class="hash-copy" onclick="copyToClipboard('${esc(h.script_pubkey)}',this)">copy</button>
+            </div>
+        </div>
+        <div class="detail-grid" style="margin-top:16px">
+            <div>
+                <div class="detail-label">Batch</div>
+                <div class="detail-value">${h.commitment_idx != null ? '#' + h.commitment_idx : '<span style="color:var(--text-muted)">-</span>'}</div>
+            </div>
+            <div>
+                <div class="detail-label">Commitment Root</div>
+                ${h.commitment_root
+                    ? `<div class="hash-row" style="margin-top:5px">
+                        <span class="hash-value break-all" style="white-space:normal">${esc(h.commitment_root)}</span>
+                        <button class="hash-copy" onclick="copyToClipboard('${esc(h.commitment_root)}',this)">copy</button>
+                       </div>`
+                    : '<div class="detail-value" style="color:var(--text-muted)">-</div>'}
+            </div>
+        </div>
+        ${h.dev_private_key ? `
+        <div style="margin-top:16px;padding:12px 14px;background:var(--yellow-dim);border:1px solid rgba(212,169,78,0.16);border-radius:8px">
+            <div class="flex items-center gap-2" style="margin-bottom:8px">
+                <span style="font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--yellow)">Dev Private Key</span>
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text-muted)">(testing only, not for production)</span>
+            </div>
+            <div class="hash-row">
+                <span class="hash-value break-all" style="white-space:normal;font-size:11px">${esc(h.dev_private_key)}</span>
+                <button class="hash-copy" onclick="copyToClipboard('${esc(h.dev_private_key)}',this)">copy</button>
+            </div>
+        </div>` : ''}`;
+}
+
+function renderActions(h) {
+    const card = document.getElementById('actionsCard');
+    const actions = document.getElementById('handleActions');
+    card.classList.remove('hidden');
+
+    let btns = '';
+    if (!h.commitment_root) {
+        btns += h.parked
+            ? `<button onclick="togglePark(false)" class="btn-secondary">Unpark</button>`
+            : `<button onclick="togglePark(true)" class="btn-secondary">Park</button>`;
+        btns += `<button onclick="removeHandle()" class="btn-secondary" style="color:var(--red)">Remove</button>`;
+    }
+    const pubLabel = h.publish_status ? 'Re-publish Certificate' : 'Publish Certificate';
+    btns += `<button onclick="publishCert()" class="btn-secondary">${pubLabel}</button>`;
+    btns += `<button onclick="downloadCert()" class="btn-secondary">Download Certificates</button>`;
+    btns += `<button onclick="queryHandle()" class="btn-secondary">Query Fabric</button>`;
+    actions.innerHTML = btns;
+}
+
+/* --- Actions --- */
+
+async function togglePark(parked) {
+    try {
+        const r = await fetch(`/spaces/${encodeURIComponent(space)}/park`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ handles: [handle], parked })
+        });
+        const j = await r.json();
+        if (r.ok) {
+            showResult(parked ? 'Handle parked' : 'Handle unparked', true);
+            loadHandle();
+        } else {
+            showResult(j.error || JSON.stringify(j), false);
+        }
+    } catch (e) {
+        showResult(e.message, false);
+    }
+}
+
+async function removeHandle() {
+    if (!confirm(`Remove ${handle}${space}? This cannot be undone.`)) return;
+    try {
+        const r = await fetch(`/spaces/${encodeURIComponent(space)}/remove`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ handles: [handle] })
+        });
+        const j = await r.json();
+        if (r.ok) {
+            window.location.href = `/ui/spaces/${encodeURIComponent(space)}`;
+        } else {
+            showResult(j.error || JSON.stringify(j), false);
+        }
+    } catch (e) {
+        showResult(e.message, false);
+    }
+}
+
+async function publishCert() {
+    showResult('Issuing certificate...', true);
+    try {
+        const r = await fetch(`/certs/${encodeURIComponent(fullHandle)}`);
+        if (!r.ok) {
+            const j = await r.json();
+            showResult(j.error || 'Failed to issue cert', false);
+            return;
+        }
+        await r.json();
+        showResult('Certificate issued successfully', true);
+        loadHandle();
+    } catch (e) {
+        showResult(e.message, false);
+    }
+}
+
+async function downloadCert() {
+    try {
+        const r = await fetch(`/certs/${encodeURIComponent(fullHandle)}`);
+        if (!r.ok) {
+            const j = await r.json();
+            showResult(j.error || 'Failed to issue cert', false);
+            return;
+        }
+        const cert = await r.json();
+        const blob = new Blob([JSON.stringify(cert, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${handle}${space}.cert.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showResult('Certificate downloaded', true);
+    } catch (e) {
+        showResult(e.message, false);
+    }
+}
+
+async function queryHandle() {
+    const card = document.getElementById('queryCard');
+    const result = document.getElementById('queryResult');
+    card.classList.remove('hidden');
+    result.innerHTML = '<pre class="code-block">Querying...</pre>';
+    try {
+        const r = await fetch('/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ handle: fullHandle })
+        });
+        const j = await r.json();
+        result.innerHTML = `<pre class="code-block">${esc(JSON.stringify(j, null, 2))}</pre>`;
+    } catch (e) {
+        result.innerHTML = `<pre class="code-block" style="color:var(--red)">${esc(e.message)}</pre>`;
+    }
+}
+
+loadHandle();
+</script>
+{% endblock %}

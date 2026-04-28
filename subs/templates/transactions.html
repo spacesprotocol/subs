@@ -1,0 +1,415 @@
+{% extends "base.html" %}
+{% block title %}Transactions - subsd{% endblock %}
+{% block nav_txns_cls %}active{% endblock %}
+
+{% block topbar_left %}
+<span class="topbar-title">Transactions</span>
+{% endblock %}
+
+{% block content %}
+<div class="anim" style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
+        <span style="font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted)">Recent Transactions</span>
+        <div style="display:flex;align-items:center;gap:6px">
+            <button id="prevPage" onclick="prevPage()" class="btn-sm" disabled>←</button>
+            <span id="pageInfo" style="font-family:var(--mono);font-size:10px;color:var(--text-muted)"></span>
+            <button id="nextPage" onclick="nextPage()" class="btn-sm">→</button>
+            <button onclick="loadTransactions()" class="btn-sm">↻</button>
+        </div>
+    </div>
+    <div id="txList" style="display:flex;flex-direction:column;gap:8px">
+        <div style="padding:40px;text-align:center;color:var(--text-muted);font-size:13px">Loading...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PER_PAGE = 20;
+let currentSkip = 0;
+let txns = [];
+
+function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+function copyTx(btn, text) {
+    navigator.clipboard.writeText(text).then(() => {
+        btn.classList.add('copied');
+        const orig = btn.textContent;
+        btn.textContent = '\u2713';
+        setTimeout(() => { btn.classList.remove('copied'); btn.textContent = orig; }, 1500);
+    });
+}
+
+function toggleTx(header) {
+    header.closest('.tx2').classList.toggle('open');
+}
+
+const COPYABLE_KEYS = new Set([
+    'script_pubkey', 'signing_info', 'recipient_script_pubkey',
+    'state_root', 'prev_root', 'rolling_hash', 'previous_spaceout',
+    'root', 'bind_spk'
+]);
+
+function prettyLabel(key) {
+    return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function isCopyable(key, v) {
+    return COPYABLE_KEYS.has(key) || (typeof v === 'string' && v.length > 24);
+}
+
+function renderField(key, value) {
+    if (key === 'type' || key === 'space') return '';
+    if (value === null || value === undefined) return '';
+    const label = prettyLabel(key);
+    const v = typeof value === 'object' ? JSON.stringify(value) : String(value);
+
+    if (isCopyable(key, v)) {
+        return `<div class="tx2-field">
+            <div class="tx2-field-label">${esc(label)}</div>
+            <div class="tx2-field-value tx2-field-value--hash">
+                <span>${esc(v)}</span>
+                <button class="tx2-field-copy" onclick="event.stopPropagation();copyTx(this,'${esc(v)}')">copy</button>
+            </div>
+        </div>`;
+    }
+    return `<div class="tx2-field">
+        <div class="tx2-field-label">${esc(label)}</div>
+        <div class="tx2-field-value">${esc(v)}</div>
+    </div>`;
+}
+
+/* Primary event = first event, determines the card icon/label */
+function primaryEvent(events) {
+    if (!events || !events.length) return { type: 'unknown' };
+    // Prefer non-bidout, non-fee_bump events
+    const pref = events.find(e => e.type !== 'bidout' && e.type !== 'fee_bump');
+    return pref || events[0];
+}
+
+/* Icon SVGs by type */
+const ICON_SVG = {
+    commit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+    open: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+    bid: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>',
+    register: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>',
+    transfer: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 3h5v5"/><path d="M21 3l-9 9"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
+    delegate: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 3h5v5"/><path d="M21 3l-9 9"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
+    send: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>',
+    create_num: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3L8 21"/><path d="M16 3l-2 18"/></svg>',
+    createnum: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3L8 21"/><path d="M16 3l-2 18"/></svg>',
+    fee_bump: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>',
+    bidout: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+};
+const DEFAULT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/></svg>';
+
+function iconClass(type) {
+    const map = { commit: 'commit', open: 'open', bid: 'bid', register: 'register',
+        transfer: 'transfer', delegate: 'delegate', send: 'send',
+        create_num: 'create', createnum: 'create', fee_bump: 'fee_bump', bidout: 'default' };
+    return map[type] || 'default';
+}
+
+function renderTxCard(tx, idx) {
+    const confirmed = tx.block_height != null;
+    const events = tx.events || [];
+    const pe = primaryEvent(events);
+    const others = events.filter(e => e !== pe);
+    const txidUpper = tx.txid.toUpperCase();
+    const shortId = txidUpper.slice(0, 10) + '…' + txidUpper.slice(-8);
+
+    let html = `<div class="tx2${confirmed ? '' : ' tx2--pending'}" style="animation-delay:${idx * 0.03}s">`;
+
+    // Header
+    html += `<div class="tx2-header" onclick="toggleTx(this)"><div class="tx2-left">`;
+
+    // Icon(s)
+    if (events.length > 1) {
+        html += '<div class="tx2-icon-stack">';
+        for (const ev of events.slice(0, 3)) {
+            html += `<div class="tx2-icon-mini tx2-icon--${iconClass(ev.type)}">${ICON_SVG[ev.type] || DEFAULT_ICON}</div>`;
+        }
+        html += '</div>';
+    } else {
+        html += `<div class="tx2-icon tx2-icon--${iconClass(pe.type)}">${ICON_SVG[pe.type] || DEFAULT_ICON}</div>`;
+    }
+
+    // Label
+    html += '<div class="tx2-info"><div class="tx2-label">';
+    html += esc(pe.type || 'unknown');
+    if (pe.space) html += ` <span class="tx2-space">${esc(pe.space)}</span>`;
+    if (others.length === 1) {
+        html += ` <span style="font-size:10px;color:var(--text-muted);font-weight:400">+ ${esc(others[0].type)}</span>`;
+    } else if (others.length > 1) {
+        html += ` <span style="font-size:10px;color:var(--text-muted);font-weight:400">+ ${others.length} more</span>`;
+    }
+    html += '</div>';
+
+    // Short txid
+    html += `<div class="tx2-txid"><span class="tx2-txid-text">${shortId}</span>`;
+    html += `<button class="tx2-copy-sm" onclick="event.stopPropagation();copyTx(this,'${txidUpper}')">copy</button></div>`;
+    html += '</div></div>'; // close tx2-info, tx2-left
+
+    // Right side
+    html += '<div class="tx2-right">';
+    if (confirmed) {
+        html += `<div class="tx2-status tx2-status--confirmed">#${tx.block_height}</div>`;
+    } else {
+        html += '<div class="tx2-status tx2-status--pending">unconfirmed</div>';
+        html += `<button class="tx2-bump" onclick="event.stopPropagation();bumpFee('${tx.txid}')">Bump fee</button>`;
+    }
+    html += '<svg class="tx2-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>';
+    html += '</div></div>'; // close tx2-right, tx2-header
+
+    // Detail panel
+    html += '<div class="tx2-detail"><div class="tx2-detail-inner">';
+
+    // Event blocks
+    for (const ev of events) {
+        const fields = Object.entries(ev).filter(([k,v]) => k !== 'type' && k !== 'space' && v != null);
+        if (fields.length > 0) {
+            html += '<div class="tx2-ev-block"><div class="tx2-ev-block-head">';
+            html += `<span class="tx2-ev-block-badge tx2-ev-block-badge--${iconClass(ev.type)}">${esc(ev.type)}</span>`;
+            if (ev.space) html += `<span class="tx2-ev-block-space">${esc(ev.space)}</span>`;
+            html += '</div>';
+            for (const [k, v] of fields) html += renderField(k, v);
+            html += '</div>';
+        }
+    }
+
+    // Amounts
+    const parts = [];
+    if (tx.sent > 0) parts.push(`<div class="tx2-amt-chip"><span class="val">${tx.sent.toLocaleString()}</span><span class="lbl">sent</span></div>`);
+    if (tx.received > 0) parts.push(`<div class="tx2-amt-chip"><span class="val">${tx.received.toLocaleString()}</span><span class="lbl">recv</span></div>`);
+    if (tx.fee != null) parts.push(`<div class="tx2-amt-chip"><span class="val">${tx.fee.toLocaleString()}</span><span class="lbl">fee</span></div>`);
+    if (parts.length) html += `<div class="tx2-amounts-row">${parts.join('')}</div>`;
+
+    // Full TXID
+    html += `<div class="tx2-full-txid">
+        <span class="tx2-full-txid-label">TXID</span>
+        <span class="tx2-full-txid-value">${txidUpper}</span>
+        <button class="tx2-field-copy" onclick="event.stopPropagation();copyTx(this,'${txidUpper}')">copy</button>
+    </div>`;
+
+    html += '</div></div></div>'; // close detail-inner, detail, tx2
+    return html;
+}
+
+async function loadTransactions() {
+    const el = document.getElementById('txList');
+    el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);font-size:13px">Loading...</div>';
+    try {
+        const r = await fetch('/rpc/spaced', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ method: 'walletlisttransactions', params: [walletName, PER_PAGE, currentSkip] })
+        });
+        const data = await r.json();
+        txns = data.result || [];
+        renderList();
+    } catch (e) {
+        el.innerHTML = `<div style="padding:40px;text-align:center;color:var(--red);font-size:13px">Error: ${esc(e.message)}</div>`;
+    }
+}
+
+function renderList() {
+    const el = document.getElementById('txList');
+    document.getElementById('pageInfo').textContent = txns.length > 0
+        ? `${currentSkip + 1}\u2013${currentSkip + txns.length}` : '';
+    document.getElementById('prevPage').disabled = currentSkip === 0;
+    document.getElementById('nextPage').disabled = txns.length < PER_PAGE;
+
+    if (txns.length === 0) {
+        el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);font-size:13px">No transactions found</div>';
+        return;
+    }
+    el.innerHTML = txns.map((tx, i) => renderTxCard(tx, i)).join('');
+}
+
+function prevPage() { currentSkip = Math.max(0, currentSkip - PER_PAGE); loadTransactions(); }
+function nextPage() { currentSkip += PER_PAGE; loadTransactions(); }
+
+function bumpFee(txid) {
+    openFeeModal(null, async (feeRate) => {
+        if (feeRate == null) { alert('A fee rate is required.'); return; }
+        try {
+            const r = await fetch('/rpc/spaced', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ method: 'walletbumpfee', params: [walletName, txid, toRpcFeeRate(feeRate), false] })
+            });
+            const data = await r.json();
+            if (data.result) {
+                alert('Fee bumped successfully.');
+                loadTransactions();
+            } else {
+                alert('Bump fee failed: ' + JSON.stringify(data.error || data));
+            }
+        } catch (e) { alert('Bump fee failed: ' + e.message); }
+    });
+}
+
+rpcReady.then(() => loadTransactions());
+</script>
+
+<style>
+/* Card */
+.tx2 {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    animation: tx-enter 0.3s ease both;
+}
+.tx2:hover { border-color: #35353d; box-shadow: 0 2px 16px rgba(0,0,0,0.18); }
+@keyframes tx-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+.tx2--pending { background: rgba(212,169,78,0.04); border-color: rgba(212,169,78,0.15); }
+.tx2--pending:hover { border-color: rgba(212,169,78,0.25); }
+
+/* Header */
+.tx2-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; cursor: pointer; gap: 12px;
+}
+.tx2-header:hover { background: rgba(255,255,255,0.015); }
+.tx2-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
+.tx2-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+/* Icon */
+.tx2-icon {
+    width: 34px; height: 34px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.tx2-icon--open, .tx2-icon--bid, .tx2-icon--register { background: var(--green-dim); color: var(--green); border: 1px solid rgba(63,188,139,0.18); }
+.tx2-icon--commit { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(94,157,224,0.18); }
+.tx2-icon--delegate, .tx2-icon--transfer { background: var(--purple-dim); color: var(--purple); border: 1px solid rgba(167,139,250,0.18); }
+.tx2-icon--send, .tx2-icon--create { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(224,114,46,0.18); }
+.tx2-icon--fee_bump { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(212,169,78,0.18); }
+.tx2-icon--default { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border); }
+
+.tx2-icon-stack { display: flex; gap: 4px; flex-shrink: 0; }
+.tx2-icon-mini {
+    width: 26px; height: 26px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+
+/* Info */
+.tx2-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tx2-label {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    color: var(--text-primary); letter-spacing: -0.01em;
+    display: flex; align-items: baseline; gap: 6px;
+}
+.tx2-space { color: var(--accent); font-weight: 500; }
+.tx2-txid {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 5px;
+}
+.tx2-txid-text { opacity: 0.7; }
+.tx2-copy-sm {
+    font-family: var(--mono); font-size: 9px; color: var(--text-muted);
+    background: none; border: 1px solid transparent; border-radius: 3px;
+    padding: 0px 4px; cursor: pointer; opacity: 0; transition: all 0.15s;
+}
+.tx2:hover .tx2-copy-sm { opacity: 1; border-color: var(--border); }
+.tx2-copy-sm:hover { color: var(--accent); border-color: var(--accent) !important; }
+.tx2-copy-sm.copied { color: var(--green); border-color: var(--green) !important; opacity: 1; }
+
+/* Status */
+.tx2-status { font-family: var(--mono); font-size: 10px; font-weight: 600; min-width: 52px; text-align: right; }
+.tx2-status--confirmed { color: var(--text-muted); }
+.tx2-status--pending {
+    color: var(--yellow);
+    display: flex; align-items: center; gap: 5px;
+}
+.tx2-status--pending::before {
+    content: ''; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--yellow); animation: pulse-dot 1.5s ease infinite;
+}
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.tx2-bump {
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    color: var(--yellow); background: var(--yellow-dim);
+    border: 1px solid rgba(212,169,78,0.2); border-radius: 5px;
+    padding: 3px 8px; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.tx2-bump:hover { background: rgba(212,169,78,0.18); border-color: rgba(212,169,78,0.35); }
+
+/* Chevron */
+.tx2-chevron { color: var(--text-muted); transition: transform 0.2s, color 0.15s; flex-shrink: 0; }
+.tx2.open .tx2-chevron { transform: rotate(90deg); color: var(--text-secondary); }
+
+/* Detail panel */
+.tx2-detail {
+    max-height: 0; overflow: hidden;
+    transition: max-height 0.25s ease;
+    border-top: 0px solid transparent;
+}
+.tx2.open .tx2-detail { max-height: 800px; border-top: 1px solid var(--border-subtle); }
+.tx2-detail-inner { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+/* Event blocks */
+.tx2-ev-block {
+    background: var(--bg-base); border: 1px solid var(--border-subtle);
+    border-radius: 8px; padding: 12px 14px;
+}
+.tx2-ev-block-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tx2-ev-block-badge {
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 2px 8px; border-radius: 4px;
+}
+.tx2-ev-block-badge--commit { background: var(--blue-dim); color: var(--blue); }
+.tx2-ev-block-badge--open, .tx2-ev-block-badge--bid, .tx2-ev-block-badge--register { background: var(--green-dim); color: var(--green); }
+.tx2-ev-block-badge--delegate, .tx2-ev-block-badge--transfer { background: var(--purple-dim); color: var(--purple); }
+.tx2-ev-block-badge--send, .tx2-ev-block-badge--create { background: var(--accent-dim); color: var(--accent); }
+.tx2-ev-block-badge--fee_bump { background: var(--yellow-dim); color: var(--yellow); }
+.tx2-ev-block-badge--default { background: var(--bg-raised); color: var(--text-muted); }
+.tx2-ev-block-space { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--text-primary); }
+
+/* Fields */
+.tx2-field {}
+.tx2-field-label {
+    font-family: var(--mono); font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); margin-bottom: 3px;
+}
+.tx2-field-value { font-family: var(--mono); font-size: 12px; color: var(--text-secondary); }
+.tx2-field-value--hash {
+    background: var(--bg-base); padding: 5px 8px; border-radius: 5px;
+    border: 1px solid var(--border-subtle);
+    word-break: break-all; font-size: 11px;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+}
+.tx2-field-copy {
+    font-family: var(--mono); font-size: 9px; color: var(--text-muted);
+    background: none; border: 1px solid var(--border);
+    padding: 1px 5px; border-radius: 3px;
+    cursor: pointer; transition: all 0.12s; flex-shrink: 0;
+}
+.tx2-field-copy:hover { color: var(--accent); border-color: var(--accent); }
+.tx2-field-copy.copied { color: var(--green); border-color: var(--green); }
+
+/* Amounts */
+.tx2-amounts-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.tx2-amt-chip { display: flex; align-items: baseline; gap: 4px; font-family: var(--mono); font-size: 11px; }
+.tx2-amt-chip .val { color: var(--text-primary); font-weight: 600; }
+.tx2-amt-chip .lbl { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
+
+/* Full TXID */
+.tx2-full-txid {
+    display: flex; align-items: center; gap: 8px;
+    padding-top: 6px; border-top: 1px solid var(--border-subtle); margin-top: 4px;
+}
+.tx2-full-txid-label {
+    font-family: var(--mono); font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); flex-shrink: 0;
+}
+.tx2-full-txid-value {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    word-break: break-all; flex: 1; user-select: all;
+}
+</style>
+{% endblock %}

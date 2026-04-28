@@ -1,0 +1,10 @@
+[package]
+name = "subs-types"
+version = "0.1.0"
+edition = "2021"
+description = "Shared types for subs and subs-prover"
+
+[dependencies]
+serde = { workspace = true }
+borsh = { workspace = true }
+libveritas_zk = { workspace = true }

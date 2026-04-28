@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% block title %}Settings - subsd{% endblock %}
+{% block nav_settings_cls %}active{% endblock %}
+
+{% block topbar_left %}
+<span class="topbar-title">Settings</span>
+{% endblock %}
+
+{% block content %}
+<div class="anim" style="display:flex;flex-direction:column;gap:16px">
+
+    <div class="card anim" style="animation-delay:.04s">
+        <div class="section-header">
+            <div class="flex items-center gap-2">
+                <div class="card-icon" style="background:var(--purple-dim);width:28px;height:28px;border-radius:8px">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--purple)"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/></svg>
+                </div>
+                <div>
+                    <h3 style="text-transform:none;letter-spacing:0">Prover Server</h3>
+                    <span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">ZK proof generation</span>
+                </div>
+            </div>
+        </div>
+        <div class="section-body">
+            <div class="flex items-end gap-3">
+                <div class="flex-1">
+                    <label for="prover-endpoint" class="form-label">Endpoint</label>
+                    <input type="text" id="prover-endpoint" placeholder="http://localhost:7778" class="input-field w-full">
+                </div>
+                <button onclick="testProver()" class="btn-secondary">Test</button>
+                <button onclick="saveProver()" class="btn-primary">Save</button>
+            </div>
+            <div id="prover-status" class="hidden" style="margin-top:10px"></div>
+        </div>
+    </div>
+
+    <div class="card anim" style="animation-delay:.1s">
+        <div class="section-header">
+            <div class="flex items-center gap-2">
+                <div class="card-icon" style="background:var(--blue-dim);width:28px;height:28px;border-radius:8px">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--blue)"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+                </div>
+                <div>
+                    <h3 style="text-transform:none;letter-spacing:0">Registry Server</h3>
+                    <span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">Handle registration & webhooks</span>
+                </div>
+            </div>
+        </div>
+        <div class="section-body" style="display:flex;flex-direction:column;gap:18px">
+            <div>
+                <div class="flex items-end gap-3">
+                    <div class="flex-1">
+                        <label for="registry-endpoint" class="form-label">Endpoint</label>
+                        <input type="text" id="registry-endpoint" placeholder="https://registry.example.com" class="input-field w-full">
+                    </div>
+                    <button onclick="testRegistry()" class="btn-secondary">Test</button>
+                    <button onclick="saveRegistry()" class="btn-primary">Save</button>
+                </div>
+                <div id="registry-status" class="hidden" style="margin-top:10px"></div>
+            </div>
+            <div id="registry-sync-section" class="hidden" style="padding-top:18px;border-top:1px solid var(--border-subtle)">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div style="font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text-primary)">Sync Handles</div>
+                        <div style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">Pull pending registrations</div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span id="sync-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted)"></span>
+                        <button onclick="syncFromRegistry()" id="sync-btn" class="btn-primary">Sync Now</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card anim" style="animation-delay:.16s">
+        <div class="section-header"><h3>Current Configuration</h3></div>
+        <div class="section-body" style="display:flex;flex-direction:column;gap:8px">
+            <div class="hash-row">
+                <span class="hash-label" style="width:auto;min-width:120px">prover</span>
+                <span class="hash-value" id="current-prover">-</span>
+            </div>
+            <div class="hash-row">
+                <span class="hash-label" style="width:auto;min-width:120px">registry</span>
+                <span class="hash-value" id="current-registry">-</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+/* --- Helpers --- */
+
+function showStatus(id, message, ok) {
+    const el = document.getElementById(id);
+    el.innerHTML = `<div class="alert ${ok ? 'alert-success' : 'alert-error'}">${message}</div>`;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 5000);
+}
+
+function updateSync(endpoint) {
+    const section = document.getElementById('registry-sync-section');
+    endpoint ? section.classList.remove('hidden') : section.classList.add('hidden');
+}
+
+/* --- Load config --- */
+
+async function loadConfig() {
+    try {
+        const r = await fetch('/config');
+        const config = await r.json();
+        document.getElementById('prover-endpoint').value = config.prover_endpoint || '';
+        document.getElementById('registry-endpoint').value = config.registry_endpoint || '';
+        document.getElementById('current-prover').textContent = config.prover_endpoint || '(not set)';
+        document.getElementById('current-registry').textContent = config.registry_endpoint || '(not set)';
+        updateSync(config.registry_endpoint);
+    } catch (e) {}
+}
+
+/* --- Prover --- */
+
+async function testProver() {
+    const ep = document.getElementById('prover-endpoint').value.trim();
+    if (!ep) { showStatus('prover-status', 'Enter URL', false); return; }
+    showStatus('prover-status', 'Testing...', true);
+    try {
+        const r = await fetch('/config/test/prover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: ep })
+        });
+        const j = await r.json();
+        showStatus('prover-status', j.success ? 'Connected' : (j.error || 'Failed'), j.success);
+    } catch (e) {
+        showStatus('prover-status', e.message, false);
+    }
+}
+
+async function saveProver() {
+    const ep = document.getElementById('prover-endpoint').value.trim();
+    try {
+        const r = await fetch('/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prover_endpoint: ep || null })
+        });
+        const j = await r.json();
+        if (j.success) {
+            showStatus('prover-status', 'Saved', true);
+            document.getElementById('current-prover').textContent = ep || '(not set)';
+        } else {
+            showStatus('prover-status', 'Failed', false);
+        }
+    } catch (e) {
+        showStatus('prover-status', e.message, false);
+    }
+}
+
+/* --- Registry --- */
+
+async function testRegistry() {
+    const ep = document.getElementById('registry-endpoint').value.trim();
+    if (!ep) { showStatus('registry-status', 'Enter URL', false); return; }
+    showStatus('registry-status', 'Testing...', true);
+    try {
+        const r = await fetch('/config/test/registry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: ep })
+        });
+        const j = await r.json();
+        showStatus('registry-status', j.success ? 'Connected' : (j.error || 'Failed'), j.success);
+    } catch (e) {
+        showStatus('registry-status', e.message, false);
+    }
+}
+
+async function saveRegistry() {
+    const ep = document.getElementById('registry-endpoint').value.trim();
+    try {
+        const r = await fetch('/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ registry_endpoint: ep || null })
+        });
+        const j = await r.json();
+        if (j.success) {
+            showStatus('registry-status', 'Saved', true);
+            document.getElementById('current-registry').textContent = ep || '(not set)';
+            updateSync(ep);
+        } else {
+            showStatus('registry-status', 'Failed', false);
+        }
+    } catch (e) {
+        showStatus('registry-status', e.message, false);
+    }
+}
+
+/* --- Sync --- */
+
+async function syncFromRegistry() {
+    const btn = document.getElementById('sync-btn');
+    const status = document.getElementById('sync-status');
+    btn.disabled = true;
+    btn.textContent = 'Syncing...';
+    status.textContent = '';
+    try {
+        const r = await fetch('/registry/sync', { method: 'POST' });
+        const j = await r.json();
+        if (r.ok && j.success) {
+            status.textContent = `Pulled ${j.pulled}, staged ${j.staged}`;
+            status.style.color = 'var(--green)';
+        } else {
+            status.textContent = j.error || 'Failed';
+            status.style.color = 'var(--red)';
+        }
+    } catch (e) {
+        status.textContent = e.message;
+        status.style.color = 'var(--red)';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sync Now';
+    }
+}
+
+loadConfig();
+</script>
+{% endblock %}

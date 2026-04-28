@@ -1,0 +1,45 @@
+[package]
+name = "subs-core"
+version = "0.1.2"
+edition = "2021"
+
+[[bin]]
+name = "spaced"
+path = "tests/bin/spaced.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }
+borsh = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+bitcoin = { workspace = true, features = ["base64", "serde"] }
+rusqlite = { workspace = true }
+risc0-zkvm = { workspace = true }
+
+spacedb = { workspace = true }
+fabric = { workspace = true }
+libveritas = { workspace = true }
+libveritas_zk = { workspace = true }
+subs-types = { workspace = true }
+
+spaces_protocol = { workspace = true }
+spaces_nums = { workspace = true }
+spaces_client = { workspace = true, features = ["schema"] }
+spaces_wallet = { workspace = true }
+
+env_logger = "0.11.8"
+log = "0.4.29"
+
+[features]
+default = []
+
+
+[dev-dependencies]
+tempfile = { workspace = true }
+spaces_testutil = { workspace = true }
+subs-prover = { workspace = true }
