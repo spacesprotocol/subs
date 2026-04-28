@@ -1,4 +1,3 @@
-<br />
 <p align="center">
   <h2>subs</h2>
   <p>
