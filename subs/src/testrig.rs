@@ -134,6 +134,12 @@ impl TestRigHandle {
         &self.spaced_rpc_url
     }
 
+    /// The credentials spaced was launched with, so callers authenticate as
+    /// this rig rather than assuming what it used.
+    pub fn spaced_rpc_auth(&self) -> (String, String) {
+        (SPACED_RPC_USER.to_string(), SPACED_RPC_PASS.to_string())
+    }
+
     /// Get the bitcoin RPC URL.
     pub fn bitcoin_rpc_url(&self) -> &str {
         &self.bitcoin_rpc_url

@@ -121,7 +121,12 @@ async fn run_normal(cli: Cli) -> Result<()> {
     let wallet = cli.wallet.as_ref().expect("wallet required");
 
     // Build RPC client
-    let rpc = build_rpc_client(rpc_url, cli.rpc_user.as_deref(), cli.rpc_password.as_deref(), cli.rpc_cookie.as_deref())?;
+    let rpc_auth = resolve_rpc_auth(
+        cli.rpc_user.as_deref(),
+        cli.rpc_password.as_deref(),
+        cli.rpc_cookie.as_deref(),
+    )?;
+    let rpc = build_rpc_client(rpc_url, rpc_auth.as_ref())?;
 
     // Ensure wallet is loaded
     tracing::info!("Loading wallet: {}", wallet);
@@ -153,7 +158,7 @@ async fn run_normal(cli: Cli) -> Result<()> {
     operator.load_all_spaces().await?;
 
     // Build app state and run server
-    run_server(operator, config, cli.port, Some(rpc_url.clone()), None).await
+    run_server(operator, config, cli.port, Some(rpc_url.clone()), rpc_auth, None).await
 }
 
 #[cfg(feature = "test-rig")]
@@ -181,12 +186,7 @@ async fn run_with_test_rig(cli: Cli) -> Result<testrig::TestRigHandle> {
     tracing::info!("  Certrelay: {}", certrelay_url);
 
     // Build RPC client for spaced
-    let rpc = build_rpc_client(
-        handle.spaced_rpc_url(),
-        Some("user"),
-        Some("pass"),
-        None,
-    )?;
+    let rpc = build_rpc_client(handle.spaced_rpc_url(), Some(&handle.spaced_rpc_auth()))?;
 
     // Create data directory if needed
     if !cli.data_dir.exists() {
@@ -210,8 +210,19 @@ async fn run_with_test_rig(cli: Cli) -> Result<testrig::TestRigHandle> {
 
     // Run server (this blocks until shutdown)
     let spaced_url = handle.spaced_rpc_url().to_string();
+    let spaced_auth = Some(handle.spaced_rpc_auth());
     let bitcoin_url = handle.bitcoin_rpc_url().to_string();
-    run_server_with_testrig(operator, config, cli.port, spaced_url, bitcoin_url, certrelay_url, handle.clone()).await?;
+    run_server_with_testrig(
+        operator,
+        config,
+        cli.port,
+        spaced_url,
+        spaced_auth,
+        bitcoin_url,
+        certrelay_url,
+        handle.clone(),
+    )
+    .await?;
 
     // Background tasks (proving loop) hold AppState clones with Arc refs.
     // On shutdown just leak them; the process is exiting anyway.
@@ -229,10 +240,17 @@ async fn run_server(
     config: ConfigStore,
     port: u16,
     spaced_rpc_url: Option<String>,
+    spaced_rpc_auth: Option<(String, String)>,
     bitcoin_rpc_url: Option<String>,
 ) -> Result<()> {
     // Build app state
-    let state = AppState::with_rpc_urls(operator, config, spaced_rpc_url, bitcoin_rpc_url);
+    let state = AppState::with_rpc_urls(
+        operator,
+        config,
+        spaced_rpc_url,
+        spaced_rpc_auth,
+        bitcoin_rpc_url,
+    );
     run_server_inner(state, port).await
 }
 
@@ -242,12 +260,21 @@ async fn run_server_with_testrig(
     config: ConfigStore,
     port: u16,
     spaced_rpc_url: String,
+    spaced_rpc_auth: Option<(String, String)>,
     bitcoin_rpc_url: String,
     certrelay_url: String,
     test_rig: std::sync::Arc<testrig::TestRigHandle>,
 ) -> Result<()> {
     // Build app state with test rig
-    let state = AppState::with_test_rig(operator, config, Some(spaced_rpc_url), Some(bitcoin_rpc_url), Some(certrelay_url), test_rig);
+    let state = AppState::with_test_rig(
+        operator,
+        config,
+        Some(spaced_rpc_url),
+        spaced_rpc_auth,
+        Some(bitcoin_rpc_url),
+        Some(certrelay_url),
+        test_rig,
+    );
     run_server_inner(state, port).await
 }
 
@@ -281,36 +308,51 @@ async fn run_server_inner(state: AppState, port: u16) -> Result<()> {
     Ok(())
 }
 
-fn build_rpc_client(
-    rpc_url: &str,
+/// Resolve the spaced RPC credentials from the flags, as a basic-auth pair.
+///
+/// The single source of truth for who we authenticate as: both the operator's
+/// RPC client and the console proxy derive their credentials from here. When
+/// the console spelled its own out, it worked in the test rig — whose
+/// credentials it happened to match — and 401'd against every real node.
+///
+/// A cookie file holds `user:password`, so it splits into the same shape.
+pub fn resolve_rpc_auth(
     rpc_user: Option<&str>,
     rpc_password: Option<&str>,
     rpc_cookie: Option<&std::path::Path>,
+) -> Result<Option<(String, String)>> {
+    if let Some(user) = rpc_user {
+        return Ok(Some((
+            user.to_string(),
+            rpc_password.unwrap_or("").to_string(),
+        )));
+    }
+    if let Some(cookie_path) = rpc_cookie {
+        let cookie = std::fs::read_to_string(cookie_path)?;
+        let cookie = cookie.trim();
+        let (user, password) = cookie.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!(
+                "malformed RPC cookie at {}: expected user:password",
+                cookie_path.display()
+            )
+        })?;
+        return Ok(Some((user.to_string(), password.to_string())));
+    }
+    Ok(None)
+}
+
+fn build_rpc_client(
+    rpc_url: &str,
+    auth: Option<&(String, String)>,
 ) -> Result<spaces_client::jsonrpsee::http_client::HttpClient> {
     use spaces_client::jsonrpsee::http_client::HttpClientBuilder;
 
     let mut builder = HttpClientBuilder::default();
 
-    // Set auth if provided
-    if let Some(user) = rpc_user {
-        let password = rpc_password.unwrap_or("");
-        let auth = format!("{}:{}", user, password);
+    if let Some((user, password)) = auth {
         let encoded = base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
-            auth.as_bytes(),
-        );
-        builder = builder.set_headers(
-            std::iter::once((
-                "Authorization".parse().unwrap(),
-                format!("Basic {}", encoded).parse().unwrap(),
-            ))
-            .collect(),
-        );
-    } else if let Some(cookie_path) = rpc_cookie {
-        let cookie = std::fs::read_to_string(cookie_path)?;
-        let encoded = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            cookie.trim().as_bytes(),
+            format!("{}:{}", user, password).as_bytes(),
         );
         builder = builder.set_headers(
             std::iter::once((
