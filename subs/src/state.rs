@@ -16,6 +16,11 @@ pub struct AppState {
     pub config: Arc<ConfigStore>,
     /// Spaced RPC URL for the console
     pub spaced_rpc_url: Option<String>,
+    /// Credentials the console proxy authenticates with, as (user, password).
+    ///
+    /// The same pair the operator's own RPC client uses. `None` means the node
+    /// wants no auth.
+    pub spaced_rpc_auth: Option<(String, String)>,
     /// Bitcoin RPC URL (only available in test-rig mode)
     pub bitcoin_rpc_url: Option<String>,
     /// Certrelay URL (only available in test-rig mode)
@@ -31,12 +36,14 @@ impl AppState {
         operator: Operator,
         config: ConfigStore,
         spaced_rpc_url: Option<String>,
+        spaced_rpc_auth: Option<(String, String)>,
         _bitcoin_rpc_url: Option<String>,
     ) -> Self {
         Self {
             operator: Arc::new(operator),
             config: Arc::new(config),
             spaced_rpc_url,
+            spaced_rpc_auth,
             bitcoin_rpc_url: None,
             certrelay_url: None,
         }
@@ -47,12 +54,14 @@ impl AppState {
         operator: Operator,
         config: ConfigStore,
         spaced_rpc_url: Option<String>,
+        spaced_rpc_auth: Option<(String, String)>,
         bitcoin_rpc_url: Option<String>,
     ) -> Self {
         Self {
             operator: Arc::new(operator),
             config: Arc::new(config),
             spaced_rpc_url,
+            spaced_rpc_auth,
             bitcoin_rpc_url,
             certrelay_url: None,
             test_rig: None,
@@ -64,6 +73,7 @@ impl AppState {
         operator: Operator,
         config: ConfigStore,
         spaced_rpc_url: Option<String>,
+        spaced_rpc_auth: Option<(String, String)>,
         bitcoin_rpc_url: Option<String>,
         certrelay_url: Option<String>,
         test_rig: Arc<TestRigHandle>,
@@ -72,6 +82,7 @@ impl AppState {
             operator: Arc::new(operator),
             config: Arc::new(config),
             spaced_rpc_url,
+            spaced_rpc_auth,
             bitcoin_rpc_url,
             certrelay_url,
             test_rig: Some(test_rig),

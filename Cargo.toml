@@ -9,21 +9,21 @@ subs-prover = { path = "prover" }
 subs-core = { path = "core" }
 
 # libveritas / fabric / spacedb / relay
-libveritas = { version = "=0.4.2", features = ["elf"] }
+libveritas = { version = "=0.4.4", features = ["elf"] }
 libveritas_zk = "=0.1.1"
-libveritas_testutil = "=0.4.2"
+libveritas_testutil = "=0.4.4"
 # hash-idx builds a sidecar index that speeds up .prove(); it is not a default
 # feature and pulls in rusqlite, which we already depend on.
 spacedb = { version = "0.1.3", features = ["hash-idx"] }
 relay = { git = "https://github.com/spacesprotocol/certrelay.git" }
-fabric = { package = "fabric-resolver", version = "=0.2.9" }
+fabric = { package = "fabric-resolver", version = "=0.2.10" }
 
 # Spaces protocol crates
-spaces_protocol = { version = "0.3.1", features = ["std"] }
-spaces_nums = { version = "0.3.1", features = ["std"] }
-spaces_client = { version = "0.3.1" }
-spaces_wallet = "0.3.1"
-spaces_testutil = { git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces" }
+spaces_protocol = { version = "0.4.2", features = ["std"] }
+spaces_nums = { version = "0.4.2", features = ["std"] }
+spaces_client = { version = "0.4.2" }
+spaces_wallet = "0.4.2"
+spaces_testutil = { git = "https://github.com/spacesprotocol/spaces.git" }
 
 # Common third-party deps
 serde = { version = "1.0", features = ["derive"] }

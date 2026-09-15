@@ -84,7 +84,15 @@ pub async fn proxy_spaced(
         .as_ref()
         .ok_or_else(|| json_error(StatusCode::SERVICE_UNAVAILABLE, "Spaced RPC URL not configured"))?;
 
-    proxy_rpc_call(rpc_url, &request, Some(("user", "pass"))).await
+    // Whatever the operator's own RPC client authenticates with. These were
+    // hardcoded to the test rig's credentials, so the console worked locally
+    // and 401'd against every real node.
+    let auth = state
+        .spaced_rpc_auth
+        .as_ref()
+        .map(|(u, p)| (u.as_str(), p.as_str()));
+
+    proxy_rpc_call(rpc_url, &request, auth).await
 }
 
 /// POST /rpc/bitcoin - Proxy RPC call to bitcoind (test-rig only)
